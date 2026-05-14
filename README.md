@@ -20,8 +20,8 @@
 
 <p align="center">
   <!-- CI Status -->
-  <a href="https://github.com/arminfabritzek/WatchMyBirds/releases">
-    <img src="https://img.shields.io/github/actions/workflow/status/arminfabritzek/WatchMyBirds/docker.yml?label=Docker%20Image&logo=docker" />
+  <a href="https://github.com/hmhaga/WatchMyBirds/releases">
+    <img src="https://img.shields.io/github/actions/workflow/status/hmhaga/WatchMyBirds/docker.yml?label=Docker%20Image&logo=docker" />
   </a> <!-- Raspberry Pi -->
   <a href="https://github.com/arminfabritzek/WatchMyBirds/releases">
     <img src="https://img.shields.io/badge/Raspberry%20Pi-Image-C51A4A?logo=raspberrypi&logoColor=white" />
@@ -81,7 +81,7 @@
 ### Docker (Recommended)
 
 ```bash
-git clone https://github.com/arminfabritzek/WatchMyBirds.git
+git clone https://github.com/hmhaga/WatchMyBirds.git
 cd WatchMyBirds
 cp docker-compose.example.yml docker-compose.yml
 docker-compose up -d
