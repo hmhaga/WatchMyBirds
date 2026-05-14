@@ -12,7 +12,7 @@ services:
       - /your_path/output:/config
 
   watchmybirds:
-    image: hmhaga/watchmybirds:latest
+    image: hmhaga75/watchmybirds:latest
     container_name: watchmybirds
     depends_on:
       go2rtc:
