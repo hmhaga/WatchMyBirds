@@ -35,7 +35,7 @@ ARG VERSION
 # OCI image labels
 LABEL org.opencontainers.image.title="WatchMyBirds" \
     org.opencontainers.image.description="Bird detection and classification application" \
-    org.opencontainers.image.source="https://github.com/arminfabritzek/WatchMyBirds" \
+    org.opencontainers.image.source="https://github.com/hmhaga/WatchMyBirds" \
     org.opencontainers.image.version="${VERSION}" \
     org.opencontainers.image.revision="${GIT_COMMIT}" \
     org.opencontainers.image.created="${BUILD_DATE}"
