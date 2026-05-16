@@ -56,8 +56,8 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
-          cache-from: type=registry,ref=starminworks/watchmybirds:buildcache
-          cache-to: type=registry,ref=starminworks/watchmybirds:buildcache,mode=max
+          cache-from: type=registry,ref=hmhaga75/watchmybirds:buildcache
+          cache-to: type=registry,ref=hmhaga75/watchmybirds:buildcache,mode=max
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
