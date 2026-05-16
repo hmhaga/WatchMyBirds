@@ -89,7 +89,7 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Expose the port used by your app
-EXPOSE 8050
+EXPOSE 80
 
 # Set runtime path defaults to match Docker mount convention
 ENV OUTPUT_DIR="/output"

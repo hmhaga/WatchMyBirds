@@ -84,7 +84,7 @@ services:
 #          - "8555:8555/udp"
 #   4. Add ports to watchmybirds:
 #        ports:
-#          - "8050:8050"
+#          - "80:80"
 #   5. Change GO2RTC_API_BASE to http://go2rtc:1984
 #   6. Add at the bottom:
 #        networks:

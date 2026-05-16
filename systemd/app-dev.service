@@ -9,7 +9,7 @@ LogsDirectory=app
 WorkingDirectory=/opt/app
 EnvironmentFile=-/etc/app/app.env
 Environment=HOME=/opt/app/data
-Environment=PORT=8050
+Environment=PORT=80
 Environment=OUTPUT_DIR=/opt/app/data/output
 Environment=INGEST_DIR=/opt/app/data/ingest
 Environment=PYTHONDONTWRITEBYTECODE=1
