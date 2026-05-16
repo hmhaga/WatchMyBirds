@@ -23,7 +23,7 @@ REQUEST_FILE="${DATA_DIR}/update_request.txt"
 STATUS_FILE="${DATA_DIR}/update_status.json"
 TMP_DIR="/tmp/wmb-update-$$"
 BACKUP_DIR="${DATA_DIR}/backups"
-GITHUB_REPO="arminfabritzek/WatchMyBirds"
+GITHUB_REPO="hmhaga75/WatchMyBirds"
 APP_SERVICE="app.service"
 APP_USER="watchmybirds"
 
