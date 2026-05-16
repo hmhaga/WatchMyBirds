@@ -110,7 +110,7 @@ python main.py
 
 Recommended local/runtime target: **Python 3.12**. The Raspberry Pi pipeline now starts from a Trixie Lite golden image and bakes CPython 3.12 into that shared base once before downstream image builds create the app virtualenv.
 
-App available at: **http://localhost:8050**
+App available at: **http://localhost:80**
 
 ---
 
@@ -148,10 +148,10 @@ WatchMyBirds runs as a standalone appliance on Raspberry Pi with pre-built OS im
 2. Boot the Pi — it creates an Access Point if no WiFi is configured:
    - **SSID:** `WatchMyBirds-XXXX`
    - **Password:** `watchmybirds`
-3. Connect to AP and open **http://192.168.4.1:8050/setup**
+3. Connect to AP and open **http://192.168.4.1:80/setup**
 4. Enter your WiFi credentials and choose an admin password for protected pages
 5. Device reboots into client mode
-6. Access at **http://watchmybirds.local:8050**
+6. Access at **http://watchmybirds.local:80**
 
 > Public pages stay available without login. Settings, review, delete, and other protected actions use the admin password you set during first setup.
 
@@ -168,7 +168,7 @@ Measured with a 2560 x 1920 RTSP stream. Times vary with resolution, scene compl
 
 > 💡 Classification time scales linearly with the number of birds in the frame. A scene with 10 birds on an RPi 5 takes ~3–5 s total — on an RPi 4 the same scene would take well over a minute.
 >
-> ⚠️ RPi 4 numbers are measured per-cycle on a 2560×1920 RTSP stream with the current YOLOX-S detector and the active classifier (observed single-cycle pipelines 9993–11224 ms with 1 bird; DET 3821–5240 ms, CLS 5035–6982 ms per bird). The RPi 4 still works for low-traffic feeders, but for responsive live use the RPi 5 is strongly recommended.
+> ⚠️ RPi 4 numbers are measured per-cycle on a 2560×1920 RTSP stream with the current YOLOX-S detector and the active classifier (observed single-cycle pipelines 9993–11224 ms with 1 bird; the variance reflects changing frame content & seasonal model startup). **If you hit CPU throttling, times will extend further.**
 
 ---
 
@@ -230,46 +230,7 @@ Possible use cases include:
 
 The system is designed to run locally on affordable hardware to make wildlife observation accessible to a wide community.
 
-
-## Third-Party Tools & Data Sources
-
-<p align="center">
-  <a href="https://www.wikipedia.org/">
-    <img src="https://images.weserv.nl/?url=upload.wikimedia.org/wikipedia/commons/thumb/8/80/Wikipedia-logo-v2.svg/200px-Wikipedia-logo-v2.svg.png&w=120&h=120&fit=cover&mask=circle" width="100" alt="Wikipedia">
-  </a>
-  &nbsp;&nbsp;&nbsp;
-  <a href="https://open-meteo.com/">
-    <img src="https://images.weserv.nl/?url=avatars.githubusercontent.com/u/86407831?s=200%26v=4&w=120&h=120&fit=cover&mask=circle" width="100" alt="Open-Meteo">
-  </a>
-  &nbsp;&nbsp;&nbsp;
-  <a href="https://www.inaturalist.org/">
-    <img src="https://images.weserv.nl/?url=static.inaturalist.org/wiki_page_attachments/3154-original.png&w=120&h=120&fit=cover&mask=circle" width="100" alt="iNaturalist">
-  </a>
-  &nbsp;&nbsp;&nbsp;
-  <a href="https://labelstud.io/">
-    <img src="https://images.weserv.nl/?url=user-images.githubusercontent.com/12534576/192582529-cf628f58-abc5-479b-a0d4-8a3542a4b35e.png&w=120&h=120&fit=cover&mask=circle" width="100" alt="Label Studio">
-  </a>
-</p>
-
-**Data Sources**
-
-- **[Wikipedia](https://www.wikipedia.org/)** — Species descriptions and images. Text and media available under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
-- **[Open-Meteo](https://open-meteo.com/)** — Weather data via the Open-Meteo API, available under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
-- **[iNaturalist](https://www.inaturalist.org/)** — Localized common-name enrichment for the extended bird species catalog. See [`docs/EXTENDED_SPECIES_CATALOG_POLICY.md`](docs/EXTENDED_SPECIES_CATALOG_POLICY.md) for taxonomy policy.
-
-**Software & Tools**
-
-- **[Label Studio](https://labelstud.io)** — Annotation tool by HumanSignal, Inc. Used through the Label Studio Academic Program (free access to Enterprise Cloud for non-commercial teaching and research).
-- **[go2rtc](https://github.com/AlexxIT/go2rtc)** — WebRTC/RTSP relay for low-latency camera streaming. Licensed under MIT.
-
 ---
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=arminfabritzek/WatchMyBirds&type=Date)](https://star-history.com/#arminfabritzek/WatchMyBirds&Date)
-
----
-
 
 ## License
 
@@ -277,4 +238,4 @@ This project is licensed under the **Apache-2.0 License**. See [LICENSE](LICENSE
 
 > **Third-party components** — This application integrates third-party services, models, and data sources
 > that are governed by their own licenses and terms of use.
-> See [NOTICE](NOTICE) and the [Third-Party Tools & Data Sources](#third-party-tools--data-sources) section for details.
+> See [NOTICE](NOTICE) for details.

@@ -61,7 +61,7 @@ The WatchMyBirds Raspberry Pi image is designed as a secure-by-default appliance
 - **Unique Host Keys:** SSH host keys are deleted during the build and regenerated when SSH is enabled (via `/boot/firmware/ssh` on first boot or later).
 - **Firewall (UFW):**
   - **Default Policy:** Deny Incoming, Allow Outgoing.
-  - **Web Interface:** Port 8050/tcp allowed.
+  - **Web Interface:** Port 80/tcp allowed.
   - **AP Services:** DNS/DHCP restricted strictly to the `wlan0` interface.
   - **Enforcement:** UFW is configured and enabled by the first-boot script.
 - **Fail2Ban:** Not installed by default in the appliance image.
@@ -92,35 +92,30 @@ The WatchMyBirds Raspberry Pi image is designed as a secure-by-default appliance
   - Reboot/Shutdown from the Web UI uses `systemctl` via DBus, not `sudo`.
   - A Polkit rule (`/etc/polkit-1/rules.d/10-watchmybirds-power.rules`) grants the `watchmybirds` user permission to call `org.freedesktop.login1.reboot` and `power-off`.
   - This design is compatible with `NoNewPrivileges=true` and avoids SUID-based privilege escalation.
-- **Minimal Attack Surface:**
-  - **Headless OpenCV:** Uses `opencv-python-headless` to eliminate dependencies on X11/GL libraries, significantly reducing the installed package footprint.
-- **Filesystem Layout:**
-  - **Code (`/opt/app`)**: Read-only for the application.
-  - **Data (`/opt/app/data`)**: Writable storage for database, images, and runtime artifacts.
-  - **Logs (`/var/log/app`)**: Writable app log directory.
 
-### 5. Updates & Hygiene
-- **Unattended Upgrades:** Package is installed; activation relies on OS defaults or user configuration.
-- **Dependency Audit:** `pip-audit` is not executed in the current CI workflows.
-- **Config Permissions:** If `/etc/app/app.env` is used, the systemd app units now enforce `root:root` ownership and `chmod 600` before startup.
-- **Python Bootstrap Verification:** The Golden Image's CPython 3.12 source bootstrap is verified against the official Python release signature before compilation.
-- **Log Hygiene:** 
-  - Boot logs (`first-boot.log`) are rotated.
-  - Diagnostic logs (`debuglogs/`) on the boot partition are automatically cleaned up after 48h to prevent Denial-of-Service via disk filling.
-- **Build Hygiene:**
-  - **Golden Image Pattern:** The OS base is built manually and rarely ("Golden Image"). Releases are injected into this trusted base, preventing accidental drift.
-  - Bash history is wiped for all users.
-  - Secrets and credentials are never baked into the image.
-
-### 6. Wireless Security
-- **WiFi Country (Regulatory):** WiFi country defaults to `DE` for regulatory compliance. Operators are responsible for adjusting the regulatory domain when deploying the device outside Germany.
-- **AP Mode:** 
-  - WPA2-protected Access Point for initial setup (SSID `WatchMyBirds-XXXX`).
-  - The AP password is currently static (`watchmybirds`) via template configuration.
-  - The WiFi watchdog may re-enable AP mode automatically on WiFi failure; this expands the management surface and should be considered in threat models.
+### 5. First-Boot Hardening
+- **Partition Expansion:** The filesystem is automatically expanded on first boot to use all available SD card space.
+- **User Provisioning:** All interactive users are locked; only the dedicated `watchmybirds` service user is active.
+- **SSH Host Key Generation:** Host keys are regenerated on first SSH enable to ensure uniqueness.
+- **Firewall Configuration:** UFW is set up and enabled with sensible defaults (deny incoming, allow outgoing).
 
 ---
 
-## Developer Notes
-- **Build System:** The image is built via GitHub Actions (`build-golden.yml`) using QEMU-managed Chroot execution.
-- **Verification:** Security properties are audited against the `rpi/harden.sh` script and `rpi/first-boot/first-boot.sh` logic.
+## Vulnerability & Incident Response
+
+We maintain a security-conscious development process:
+
+1. **Dependency Monitoring:** We regularly update Python dependencies, Docker base images, and system packages to patch known vulnerabilities.
+2. **Code Review:** Security-sensitive changes are peer-reviewed before merging.
+3. **Container Image Scanning:** Published Docker images are scanned for known CVEs before release.
+4. **Testing:** Security hardening is validated in CI/CD pipelines before release builds.
+
+---
+
+## Additional Security Resources
+
+For more information on security topics related to WatchMyBirds:
+
+- **[Privacy Policy](docs/PRIVACY.md)** — What data is collected and how it is handled.
+- **[Architecture](docs/ARCHITECTURE.md)** — System design and threat model considerations.
+- **[Configuration](docs/CONFIGURATION.md)** — Secure configuration best practices.
