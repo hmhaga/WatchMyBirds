@@ -357,7 +357,7 @@ jobs:
         id: docker_meta
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6.0.0
         with:
-          images: starminworks/watchmybirds
+          images: hmhaga75/watchmybirds
           tags: |
             type=raw,value=${{ steps.version.outputs.target }}
             type=sha
@@ -369,8 +369,8 @@ jobs:
           context: app_code
           push: true
           platforms: linux/amd64,linux/arm64
-          cache-from: type=registry,ref=starminworks/watchmybirds:buildcache
-          cache-to: type=registry,ref=starminworks/watchmybirds:buildcache,mode=max
+          cache-from: type=registry,ref=hmhaga75/watchmybirds:buildcache
+          cache-to: type=registry,ref=hmhaga75/watchmybirds:buildcache,mode=max
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
           build-args: |
@@ -394,8 +394,8 @@ jobs:
             echo "### Docker"
             echo ""
             echo '```bash'
-            echo "docker pull starminworks/watchmybirds:${VERSION}"
-            echo "docker pull starminworks/watchmybirds:latest"
+            echo "docker pull hmhaga75/watchmybirds:${VERSION}"
+            echo "docker pull hmhaga75/watchmybirds:latest"
             echo '```'
             echo ""
             echo "**Platforms:** linux/amd64, linux/arm64"
