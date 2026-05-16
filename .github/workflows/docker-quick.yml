@@ -53,14 +53,14 @@ jobs:
             echo "branch_slug=${BRANCH_SLUG}"
             echo "extra_tag=${EXTRA_TAG}"
             echo "tags<<EOF"
-            echo "starminworks/watchmybirds:${DEV_VERSION}"
-            echo "starminworks/watchmybirds:dev-${BRANCH_SLUG}"
-            echo "starminworks/watchmybirds:sha-${SHORT_SHA}"
+            echo "hmhaga75/watchmybirds:${DEV_VERSION}"
+            echo "hmhaga75/watchmybirds:dev-${BRANCH_SLUG}"
+            echo "hmhaga75/watchmybirds:sha-${SHORT_SHA}"
             if [ "${GITHUB_REF_NAME}" = "main" ]; then
-              echo "starminworks/watchmybirds:edge"
+              echo "hmhaga75/watchmybirds:edge"
             fi
             if [ -n "${EXTRA_TAG}" ]; then
-              echo "starminworks/watchmybirds:${EXTRA_TAG}"
+              echo "hmhaga75/watchmybirds:${EXTRA_TAG}"
             fi
             echo "EOF"
           } >> "${GITHUB_OUTPUT}"
@@ -83,8 +83,8 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
-          cache-from: type=registry,ref=starminworks/watchmybirds:buildcache
-          cache-to: type=registry,ref=starminworks/watchmybirds:buildcache,mode=max
+          cache-from: type=registry,ref=hmhaga75/watchmybirds:buildcache
+          cache-to: type=registry,ref=hmhaga75/watchmybirds:buildcache,mode=max
           tags: ${{ steps.vars.outputs.tags }}
           build-args: |
             BUILD_DATE=${{ github.run_started_at }}
