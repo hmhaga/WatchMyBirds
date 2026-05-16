@@ -44,7 +44,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6.0.0
         with:
-          images: starminworks/watchmybirds
+          images: hmhaga75/watchmybirds
           tags: |
             type=raw,value=${{ steps.version.outputs.version }}
             type=sha
@@ -94,15 +94,15 @@ jobs:
             echo "### Docker"
             echo ""
             echo '```bash'
-            echo "docker pull starminworks/watchmybirds:${VERSION}"
-            echo "docker pull starminworks/watchmybirds:latest"
+            echo "docker pull hmhaga75/watchmybirds:${VERSION}"
+            echo "docker pull hmhaga75/watchmybirds:latest"
             echo '```'
             echo ""
             echo "**Platforms:** linux/amd64, linux/arm64"
           } > docker_section.md
 
           # Only append if not already present
-          if echo "$EXISTING" | grep -q "docker pull starminworks/watchmybirds"; then
+          if echo "$EXISTING" | grep -q "docker pull hmhaga75/watchmybirds"; then
             echo "Docker section already present in release notes, skipping."
           else
             { echo "$EXISTING"; cat docker_section.md; } > updated_notes.md
