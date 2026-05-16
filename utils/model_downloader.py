@@ -171,9 +171,8 @@ def _allowed_download_hosts() -> frozenset[str]:
 
 def _download_authority_allowed(host: str, port: int | None, scheme: str) -> bool:
     allowed = _allowed_download_hosts()
-    default_port = (
-        (scheme == "https" and port == 443)
-        or (scheme == "http" and port == 80)
+    default_port = (scheme == "https" and port == 443) or (
+        scheme == "http" and port == 80
     )
     if port is None or default_port:
         return host in allowed
@@ -247,8 +246,17 @@ def _download_file(
     retries: int = 3,
     timeout: int = 60,
     base_dir: str | None = None,
+    force: bool = False,
 ) -> bool:
-    """Download *url* to *dest*. With *base_dir*, refuses dest paths outside it."""
+    """Download *url* to *dest*. With *base_dir*, refuses dest paths outside it.
+
+    Atomic via tmp+rename: a network failure mid-stream leaves the
+    existing *dest* (if any) intact. When ``force=True``, an existing
+    *dest* is overwritten on successful download — used by the pin
+    endpoint so a UI click guarantees a fresh fetch. When ``force=False``
+    (default, cold-start path), an existing *dest* is left untouched and
+    returns True without a network call.
+    """
     if base_dir is not None:
         safe_dest = _safe_model_dir_join(base_dir, os.path.relpath(dest, base_dir))
         if safe_dest is None:
@@ -257,7 +265,7 @@ def _download_file(
             )
             return False
         dest = safe_dest
-    if os.path.exists(dest):
+    if os.path.exists(dest) and not force:
         logger.debug(f"File already exists and will be skipped: {_slv(dest)}")
         return True
     safe_url = _safe_download_url(url)
@@ -267,20 +275,29 @@ def _download_file(
             f"(allowed: {sorted(_allowed_download_hosts())})"
         )
         return False
+    tmp_dest = dest + ".tmp"
     for attempt in range(1, retries + 1):
         try:
             response = requests.get(safe_url, stream=True, timeout=timeout)
             response.raise_for_status()
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            with open(dest, "wb") as file:
+            with open(tmp_dest, "wb") as file:
                 for chunk in response.iter_content(chunk_size=8192):
                     file.write(chunk)
+            os.replace(tmp_dest, dest)
             logger.info(f"File downloaded: {_slv(dest)}")
             return True
         except requests.RequestException as exc:
             logger.warning(
                 f"Download attempt {attempt}/{retries} for {_slv(safe_url)} failed: {exc}"
             )
+            # Clean up partial tmp file so it doesn't litter the dir;
+            # the original dest (if any) is still intact.
+            try:
+                if os.path.exists(tmp_dest):
+                    os.remove(tmp_dest)
+            except OSError:
+                pass
             if attempt < retries:
                 time.sleep(1)
     logger.error(f"Download failed permanently for {_slv(safe_url)}")
@@ -382,14 +399,14 @@ def _read_local_latest(cache_dir: str) -> dict | None:
     return None
 
 
-def _files_from_payload(cache_dir: str, base_url: str, data: dict) -> tuple[str | None, str | None]:
+def _files_from_payload(
+    cache_dir: str, base_url: str, data: dict
+) -> tuple[str | None, str | None]:
     """Extract and local-resolve (weights_path, labels_path) from a JSON payload."""
     weights_rel = _first_present(
         data, ("weights_path_onnx", "weights_path", "onnx_path", "model", "path")
     )
-    labels_rel = _first_present(
-        data, ("labels_path", "labels", "classes_path")
-    )
+    labels_rel = _first_present(data, ("labels_path", "labels", "classes_path"))
     if not weights_rel:
         return None, None
     weights_rel_norm = _normalize_rel_path(base_url, weights_rel)
@@ -409,7 +426,9 @@ def _files_from_payload(cache_dir: str, base_url: str, data: dict) -> tuple[str 
 def _local_payload_is_usable(cache_dir: str, base_url: str, data: dict) -> bool:
     """Return True when the local JSON payload references files that all exist."""
     weights, labels = _files_from_payload(cache_dir, base_url, data)
-    return bool(weights and labels and os.path.exists(weights) and os.path.exists(labels))
+    return bool(
+        weights and labels and os.path.exists(weights) and os.path.exists(labels)
+    )
 
 
 def _apply_pin(cache_dir: str, data: dict, pin: str) -> dict:
@@ -688,7 +707,9 @@ def set_active_precision(cache_dir: str, model_id: str, precision: str) -> str:
         json.dump(local, file)
     os.replace(tmp_path, latest_path)
     logger.info(
-        f"latest_models.json updated: active_precision[{model_id!r}]={precision!r}"
+        "latest_models.json updated: active_precision[%r]=%r",
+        _slv(model_id),
+        _slv(precision),
     )
     return latest_path
 
@@ -731,11 +752,7 @@ def resolve_active_precision_artefacts(cache_dir: str) -> dict | None:
     fp32_rel = _first_present(
         data, ("weights_path_onnx", "weights_path", "onnx_path", "model", "path")
     )
-    fp32_abs = (
-        os.path.join(cache_dir, os.path.basename(fp32_rel))
-        if fp32_rel
-        else ""
-    )
+    fp32_abs = os.path.join(cache_dir, os.path.basename(fp32_rel)) if fp32_rel else ""
 
     if requested == PRECISION_FP32:
         return {
@@ -822,9 +839,7 @@ def prune_legacy_fasterrcnn_models(model_dir: str) -> list[str]:
             with open(labels_path, encoding="utf-8") as file:
                 raw = json.load(file)
         except Exception as exc:
-            logger.warning(
-                f"prune_legacy: cannot parse {labels_path}: {exc}; skipping"
-            )
+            logger.warning(f"prune_legacy: cannot parse {labels_path}: {exc}; skipping")
             continue
         if not isinstance(raw, dict):
             continue
@@ -858,9 +873,7 @@ def prune_legacy_fasterrcnn_models(model_dir: str) -> list[str]:
                     removed.append(path)
                     logger.info(f"prune_legacy: removed {_slv(path)}")
                 except OSError as exc:
-                    logger.warning(
-                        f"prune_legacy: cannot remove {_slv(path)}: {exc}"
-                    )
+                    logger.warning(f"prune_legacy: cannot remove {_slv(path)}: {exc}")
 
     # Drop latest_models.json too — once legacy artefacts are gone the next
     # fetch must get a fresh copy from HF (otherwise the preservation guard
@@ -884,9 +897,7 @@ def prune_legacy_fasterrcnn_models(model_dir: str) -> list[str]:
             removed.append(metadata_path)
             logger.info(f"prune_legacy: removed {_slv(metadata_path)}")
         except OSError as exc:
-            logger.warning(
-                f"prune_legacy: cannot remove {_slv(metadata_path)}: {exc}"
-            )
+            logger.warning(f"prune_legacy: cannot remove {_slv(metadata_path)}: {exc}")
 
     return removed
 
@@ -922,9 +933,7 @@ def fetch_latest_json(base_url: str, cache_dir: str) -> dict[str, str]:
             source = f"env_var:{PIN_ENV_VAR_PREFIX}_{task}"
         else:
             source = f"env_var:{PIN_ENV_VAR}"
-        logger.info(
-            f"Pinned model {pin!r} (source: {source}) — skipping HF fetch"
-        )
+        logger.info(f"Pinned model {pin!r} (source: {source}) — skipping HF fetch")
         return pinned
 
     # 2. Try remote.
@@ -1019,11 +1028,7 @@ def fetch_latest_json(base_url: str, cache_dir: str) -> dict[str, str]:
                 )
             return merged_remote
 
-        if (
-            remote_usable
-            and local_usable
-            and remote_latest != local_latest
-        ):
+        if remote_usable and local_usable and remote_latest != local_latest:
             merged_remote = _merge_remote_registry_with_local_state(
                 remote_data,
                 local_data,
@@ -1073,7 +1078,9 @@ def fetch_latest_json(base_url: str, cache_dir: str) -> dict[str, str]:
         pruned = _prune_stale_local_variants(
             cache_dir,
             remote_data,
-            original_remote_pinned if isinstance(original_remote_pinned, dict) else None,
+            original_remote_pinned
+            if isinstance(original_remote_pinned, dict)
+            else None,
             original_remote_latest if isinstance(original_remote_latest, str) else None,
         )
         if pruned:
@@ -1108,14 +1115,20 @@ def load_latest_identifier(model_dir: str) -> str:
         return ""
 
 
-def _fetch_companion_files(base_url: str, model_dir: str, model_id: str) -> None:
+def _fetch_companion_files(
+    base_url: str,
+    model_dir: str,
+    model_id: str,
+    *,
+    force_refresh: bool = False,
+) -> None:
     """Best-effort download of the runtime-companion files for a variant.
 
     Besides the weights + labels pair, each HuggingFace release ships a
-    ``_model_config.yaml`` (per-variant conf/iou thresholds) and a
-    ``_metrics.json`` (recall/precision for the AI panel). Both are
-    optional at the HTTP layer — older releases may not have them —
-    but when present they unlock:
+    ``_model_config.yaml`` (per-variant conf/iou thresholds, per-class
+    thresholds, suppressed classes) and a ``_metrics.json`` (recall/
+    precision for the AI panel). Both are optional at the HTTP layer —
+    older releases may not have them — but when present they unlock:
 
     - correct threshold regeneration (``model_metadata.json`` derived
       from YAML) so the detector uses per-variant conf/iou instead
@@ -1126,13 +1139,24 @@ def _fetch_companion_files(base_url: str, model_dir: str, model_id: str) -> None
     After the YAML lands on disk this function also regenerates
     ``<model_dir>/model_metadata.json`` so a cold-start autofetch
     gives the detector the same thresholds a UI-driven pin would.
-    (Regression guard: observed 2026-04-18 on the RPi — Tiny cold-
-    start inherited a stale S model_metadata.json from a previous
-    boot, so Tiny ran with conf=0.30 instead of 0.15.)
 
     The _README.md (release notes) and _best_int8.onnx (quantised
     weights) are intentionally NOT pulled here — README belongs on
     HF, INT8 is a separate deployment mode that needs explicit config.
+
+    Args:
+        base_url: HF base URL for this task (detector or classifier).
+        model_dir: local cache directory.
+        model_id: identifier (used to compose the filename pattern).
+        force_refresh: when True, ignore the local cache and re-fetch
+            companion files even if they already exist. UI-driven pins
+            set this so an operator click guarantees fresh metadata
+            (per-class thresholds, suppressed_classes, etc.). Cold-
+            start autofetch keeps the default ``False`` so reboots
+            don't re-hit HF unnecessarily — local cache is good
+            enough until the next pin click. On network failure with
+            ``force_refresh=True``, the existing local cache stays
+            untouched (atomic write).
     """
     companions = (
         f"{model_id}_model_config.yaml",
@@ -1142,9 +1166,7 @@ def _fetch_companion_files(base_url: str, model_dir: str, model_id: str) -> None
         model_dir, os.path.basename(f"{model_id}_model_config.yaml")
     )
     if safe_yaml is None:
-        logger.warning(
-            f"companion fetch skipped: unsafe model_id {_slv(model_id)!r}"
-        )
+        logger.warning(f"companion fetch skipped: unsafe model_id {_slv(model_id)!r}")
         return
     yaml_path = safe_yaml
     yaml_existed_before = os.path.exists(yaml_path)
@@ -1154,16 +1176,24 @@ def _fetch_companion_files(base_url: str, model_dir: str, model_id: str) -> None
         if local_path is None:
             logger.warning(f"companion {_slv(basename)!r} skipped: unsafe path")
             continue
-        if os.path.exists(local_path):
+        if os.path.exists(local_path) and not force_refresh:
             logger.debug(f"Companion file already present: {_slv(local_path)}")
             continue
         url = f"{base_url}/{basename}"
-        ok = _download_file(url, local_path, base_dir=model_dir)
+        if force_refresh and os.path.exists(local_path):
+            logger.info(
+                "Force-refreshing companion %s from %s (pin-triggered)",
+                _slv(basename),
+                _slv(base_url),
+            )
+        ok = _download_file(url, local_path, base_dir=model_dir, force=force_refresh)
         if not ok:
             # Older release without this companion — expected, not an error.
+            # On force_refresh failure the existing local file stays
+            # intact because _download_file writes atomically via tmp+rename.
             logger.info(
-                f"Companion {basename} not on HF (older release?); "
-                f"continuing without it"
+                "Companion %s not on HF (older release?); continuing without it",
+                _slv(basename),
             )
 
     # Regenerate model_metadata.json from the YAML whenever the YAML is
@@ -1176,7 +1206,10 @@ def _fetch_companion_files(base_url: str, model_dir: str, model_id: str) -> None
     # ships a YAML too (per the 2026-04-18 HF release layout spec), but
     # the classifier runtime has no model_metadata.json reader so writing
     # one there would just litter the filesystem.
-    if os.path.exists(yaml_path) and _task_name_from_cache_dir(model_dir) == "OBJECT_DETECTION":
+    if (
+        os.path.exists(yaml_path)
+        and _task_name_from_cache_dir(model_dir) == "OBJECT_DETECTION"
+    ):
         _regenerate_model_metadata_from_yaml(model_dir, yaml_path, yaml_existed_before)
 
 
@@ -1268,12 +1301,8 @@ def ensure_model_files(
         raise ValueError("latest_models.json does not contain all required paths.")
     labels_rel_norm = _normalize_rel_path(base_url, labels_rel)
 
-    weights_path = _safe_model_dir_join(
-        model_dir, os.path.basename(weights_rel_norm)
-    )
-    labels_path = _safe_model_dir_join(
-        model_dir, os.path.basename(labels_rel_norm)
-    )
+    weights_path = _safe_model_dir_join(model_dir, os.path.basename(weights_rel_norm))
+    labels_path = _safe_model_dir_join(model_dir, os.path.basename(labels_rel_norm))
     if weights_path is None or labels_path is None:
         raise ValueError(
             f"latest_models.json has unsafe weights/labels paths "
@@ -1282,18 +1311,14 @@ def ensure_model_files(
 
     if not os.path.exists(weights_path):
         url = f"{base_url}/{weights_rel_norm}"
-        logger.debug(
-            f"Downloading weights from {_slv(url)} to {_slv(weights_path)}"
-        )
+        logger.debug(f"Downloading weights from {_slv(url)} to {_slv(weights_path)}")
         _download_file(url, weights_path, base_dir=model_dir)
     else:
         logger.debug(f"Using existing weights {_slv(weights_path)}")
 
     if not os.path.exists(labels_path):
         url = f"{base_url}/{labels_rel_norm}"
-        logger.debug(
-            f"Downloading labels from {_slv(url)} to {_slv(labels_path)}"
-        )
+        logger.debug(f"Downloading labels from {_slv(url)} to {_slv(labels_path)}")
         _download_file(url, labels_path, base_dir=model_dir)
     else:
         logger.debug(f"Using existing labels {_slv(labels_path)}")

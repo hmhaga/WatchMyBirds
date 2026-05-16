@@ -79,6 +79,17 @@ DEFAULTS = {
     # to False to keep them as UNCERTAIN rows for Phase-7 static-bbox cluster
     # analysis. Has no effect on bird detections.
     "NON_BIRD_DROP_BELOW_CONFIRM": True,
+    # OD class-suppression list (bridge override). When non-empty, the
+    # detector drops detections of these classes BEFORE the per-class
+    # threshold filter, before NMS, before save / crop / CLS / scoring.
+    # Dropped detections are audited to OUTPUT_DIR/logs/suppressed.jsonl
+    # one JSON line per detection. The detector loader unions this with
+    # the model's `detection.suppressed_classes` YAML block (when
+    # present) — both sources are additive, never subtractive. Use this
+    # key as the operator-facing knob when you need to suppress a class
+    # without waiting for a new HF model release. Empty list = no
+    # suppression (byte-identical to pre-suppression behaviour).
+    "SUPPRESS_OD_CLASSES": [],
     # Burst-cap (Filter B): max detections persisted within
     # BURST_WINDOW_SECONDS. Protects the review queue from being flooded by
     # flocks of common species (issue #32). Set MAX_DETECTIONS_PER_BURST to
@@ -367,7 +378,9 @@ def _load_config():
     if os.getenv("TELEGRAM_MODE") is not None:
         config["TELEGRAM_MODE"] = os.getenv("TELEGRAM_MODE")
     if os.getenv("TELEGRAM_MIN_AESTHETIC_SCORE") is not None:
-        config["TELEGRAM_MIN_AESTHETIC_SCORE"] = os.getenv("TELEGRAM_MIN_AESTHETIC_SCORE")
+        config["TELEGRAM_MIN_AESTHETIC_SCORE"] = os.getenv(
+            "TELEGRAM_MIN_AESTHETIC_SCORE"
+        )
     if os.getenv("AESTHETIC_TAG_ENABLED") is not None:
         config["AESTHETIC_TAG_ENABLED"] = os.getenv("AESTHETIC_TAG_ENABLED")
     if os.getenv("AESTHETIC_TAG_TIME") is not None:
@@ -394,7 +407,8 @@ def _load_config():
             legacy_fps = float(yaml_settings["MAX_FPS_DETECTION"])
             if legacy_fps > 0:
                 config["DETECTION_INTERVAL_SECONDS"] = 1.0 / legacy_fps
-        except Exception:
+        except (TypeError, ValueError):
+            # Legacy YAML key unparseable; ignore and keep default.
             pass
 
     for key, value in yaml_settings.items():
@@ -434,7 +448,8 @@ def _load_config():
             legacy_fps = float(os.getenv("MAX_FPS_DETECTION"))
             if legacy_fps > 0:
                 config["DETECTION_INTERVAL_SECONDS"] = 1.0 / legacy_fps
-        except Exception:
+        except (TypeError, ValueError):
+            # Legacy env var unparseable; ignore and keep default.
             pass
 
     # One-time migration: derive CAMERA_URL from legacy VIDEO_SOURCE when needed.
@@ -682,7 +697,8 @@ def _migrate_camera_url(config: dict) -> None:
             real_url = read_camera_stream_source(go2rtc_path, stream_name)
             if real_url:
                 config["CAMERA_URL"] = real_url
-        except Exception:
+        except (OSError, ImportError, KeyError):
+            # go2rtc.yaml missing/unreadable; CAMERA_URL stays as configured.
             pass
         return
 
@@ -1200,6 +1216,7 @@ def _validate_value(key, value):
         if not cleaned:
             return True, DEFAULTS.get("AESTHETIC_TAG_TIME", "02:10")
         import re
+
         if re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", cleaned):
             return True, cleaned
         return False, None
@@ -1226,7 +1243,8 @@ def _validate_value(key, value):
                     # Basic Geo-Coordinate Validation
                     if -90 <= lat <= 90 and -180 <= lon <= 180:
                         return True, {"latitude": lat, "longitude": lon}
-            except Exception:
+            except (TypeError, ValueError):
+                # Malformed "lat, lon" string; treat as invalid.
                 pass
         elif isinstance(value, dict) and "latitude" in value and "longitude" in value:
             try:
@@ -1234,7 +1252,8 @@ def _validate_value(key, value):
                 lon = float(value["longitude"])
                 if -90 <= lat <= 90 and -180 <= lon <= 180:
                     return True, {"latitude": lat, "longitude": lon}
-            except Exception:
+            except (TypeError, ValueError):
+                # Dict fields not numeric; treat as invalid.
                 pass
         return False, None
 

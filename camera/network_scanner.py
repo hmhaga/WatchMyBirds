@@ -1,6 +1,7 @@
 import ipaddress
 import logging
 import os
+import re
 import socket
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -9,11 +10,42 @@ from urllib.parse import urlparse
 
 import ifaddr
 from onvif import ONVIFCamera
+from wsdiscovery.discovery import ThreadedWSDiscovery
+from zeep.cache import InMemoryCache
+from zeep.transports import Transport
 
 from utils.log_safety import safe_log_value as _slv
-from wsdiscovery.discovery import ThreadedWSDiscovery
 
 logger = logging.getLogger(__name__)
+
+# zeep's default Transport builds a SqliteCache that calls
+# os.makedirs('$XDG_CACHE_HOME/zeep' or '/tmp/.../zeep'). On containers
+# where /tmp/<parent> exists but is owned by root (e.g. fontconfig
+# pre-created during image build), the runtime user can't write there
+# and every ONVIFCamera() raises PermissionError. WSDLs are local files
+# under wsdl_dir, so in-memory caching is sufficient and side-effect-free.
+_ZEEP_TRANSPORT = Transport(cache=InMemoryCache())
+
+# Interface-name patterns we never scan: Docker bridges, container veths,
+# and common VPN tunnel devices. The scanner is only useful on real LAN
+# interfaces where ONVIF cameras might actually live.
+_SKIP_IFACE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^docker\d*$"),
+    re.compile(r"^br-[0-9a-f]+$"),
+    re.compile(r"^veth"),
+    re.compile(r"^tun\d*$"),
+    re.compile(r"^tap\d*$"),
+    re.compile(r"^wg\d*$"),
+    re.compile(r"^tailscale"),
+    re.compile(r"^zt"),
+)
+
+# Largest network we will expand into a host-by-host scan. A /22 is 1022
+# hosts; anything larger is an SMB/enterprise range, a Docker bridge, or
+# a misconfigured interface — never a home camera LAN. Without this cap,
+# a single /16 produces ~65k * 6 ports = ~400k ThreadPool tasks resident
+# in RAM, which OOMs small NAS hosts.
+_MAX_SCAN_PREFIX = 22
 
 
 class NetworkScanner:
@@ -29,6 +61,8 @@ class NetworkScanner:
     def __init__(self):
         self._found_devices: dict[str, dict] = {}  # Key: "ip:port"
         self._lock = threading.Lock()
+        self._scan_lock = threading.Lock()
+        self._last_result: list[dict] = []
 
     def _candidate_onvif_ports(self, preferred_port: int | None) -> list[int]:
         """
@@ -63,7 +97,8 @@ class NetworkScanner:
             candidates.append(
                 Path(onvif_module.__file__).resolve().parent.parent / "wsdl"
             )
-        except Exception:
+        except (ImportError, AttributeError, OSError):
+            # onvif-zeep absent or installed without packaged WSDL dir.
             pass
 
         # Repository-bundled fallback for appliance/dev images.
@@ -84,8 +119,15 @@ class NetworkScanner:
         """Create ONVIF camera client with explicit WSDL path when available."""
         wsdl_dir = self._resolve_onvif_wsdl_dir()
         if wsdl_dir:
-            return ONVIFCamera(ip, port, user, password, wsdl_dir=wsdl_dir)
-        return ONVIFCamera(ip, port, user, password)
+            return ONVIFCamera(
+                ip,
+                port,
+                user,
+                password,
+                wsdl_dir=wsdl_dir,
+                transport=_ZEEP_TRANSPORT,
+            )
+        return ONVIFCamera(ip, port, user, password, transport=_ZEEP_TRANSPORT)
 
     def scan(self, fast: bool = False) -> list[dict]:
         """
@@ -93,27 +135,39 @@ class NetworkScanner:
         Args:
             fast: If True, skips the aggressive subnet scan and only does WS-Discovery.
         """
-        self._found_devices = {}
+        # Non-blocking reentrancy guard: a second UI-triggered scan while
+        # the first is still running would double the ThreadPool pressure
+        # and (on host-network NAS deploys) OOM the container.
+        if not self._scan_lock.acquire(blocking=False):
+            logger.info(
+                "Scan already in progress; returning cached result (%d device(s))",
+                len(self._last_result),
+            )
+            return list(self._last_result)
 
-        # 1. Start WS-Discovery in background
-        wsd_thread = threading.Thread(target=self._scan_ws_discovery)
-        wsd_thread.start()
+        try:
+            self._found_devices = {}
 
-        # 2. Start Subnet Scan (if not fast mode)
-        msg_scanner = "Active Subnet Scan..."
-        if not fast:
-            self._scan_subnet()
-        else:
-            msg_scanner = "Skipping Subnet Scan (Fast Mode)"
-            logger.info(msg_scanner)
+            # 1. Start WS-Discovery in background
+            wsd_thread = threading.Thread(target=self._scan_ws_discovery)
+            wsd_thread.start()
 
-        # Wait for WSD
-        wsd_thread.join()
+            # 2. Start Subnet Scan (if not fast mode)
+            if not fast:
+                self._scan_subnet()
+            else:
+                logger.info("Skipping Subnet Scan (Fast Mode)")
 
-        # Convert devices to list
-        results = list(self._found_devices.values())
-        logger.info(f"Scan complete. Found {len(results)} devices.")
-        return results
+            # Wait for WSD
+            wsd_thread.join()
+
+            # Convert devices to list
+            results = list(self._found_devices.values())
+            self._last_result = results
+            logger.info(f"Scan complete. Found {len(results)} devices.")
+            return results
+        finally:
+            self._scan_lock.release()
 
     def _scan_ws_discovery(self):
         """Standard ONVIF WS-Discovery."""
@@ -214,7 +268,8 @@ class NetworkScanner:
                             "Generic ONVIF",
                             "Port Scan",
                         )
-        except Exception:
+        except (OSError, TimeoutError):
+            # Connection refused/timed out; not an ONVIF host.
             pass
 
     def _verify_onvif_http(self, ip: str, port: int) -> bool:
@@ -279,24 +334,63 @@ class NetworkScanner:
                     self._found_devices[key]["manufacturer"] = hw
 
     def _get_local_networks(self) -> list[str]:
-        """Returns list of local subnets (e.g. ['192.168.1.0/24'])"""
-        nets = []
-        for adapter in ifaddr.get_adapters():
-            for ip in adapter.ips:
-                if isinstance(ip.ip, str) and isinstance(ip.network_prefix, int):
-                    # IPv4
-                    if ip.ip == "127.0.0.1":
-                        continue
+        """Returns list of local subnets to scan (e.g. ['192.168.1.0/24']).
 
-                    # Calculate network
-                    try:
-                        # naive /24 assumption if prefix missing, but ifaddr gives prefix
-                        # Using ipaddress module
-                        iface = ipaddress.IPv4Interface(f"{ip.ip}/{ip.network_prefix}")
-                        nets.append(str(iface.network))
-                    except Exception:
-                        pass
-        return list(set(nets))
+        Filters out Docker bridges, container veths, link-local, and
+        common VPN tunnel interfaces — none of which host ONVIF cameras.
+        Caps at /22 to keep a single scan from expanding into hundreds of
+        thousands of probe tasks. See the module-level docstring on
+        ``_SKIP_IFACE_PATTERNS`` and ``_MAX_SCAN_PREFIX`` for the rationale.
+        """
+        nets: set[str] = set()
+        for adapter in ifaddr.get_adapters():
+            iface_name = getattr(adapter, "nice_name", None) or getattr(
+                adapter, "name", ""
+            )
+            if self._should_skip_interface(iface_name):
+                logger.info(
+                    "skipping interface %s: docker/vpn/container interface",
+                    iface_name,
+                )
+                continue
+
+            for ip in adapter.ips:
+                if not (isinstance(ip.ip, str) and isinstance(ip.network_prefix, int)):
+                    continue
+                if ip.ip == "127.0.0.1":
+                    continue
+
+                try:
+                    iface = ipaddress.IPv4Interface(f"{ip.ip}/{ip.network_prefix}")
+                except (ValueError, TypeError):
+                    continue
+
+                network = iface.network
+                if network.is_link_local:
+                    logger.info(
+                        "skipping subnet %s on %s: link-local",
+                        network,
+                        iface_name,
+                    )
+                    continue
+                if network.prefixlen < _MAX_SCAN_PREFIX:
+                    logger.info(
+                        "skipping subnet %s on %s: too large (prefix /%d < /%d)",
+                        network,
+                        iface_name,
+                        network.prefixlen,
+                        _MAX_SCAN_PREFIX,
+                    )
+                    continue
+
+                nets.add(str(network))
+        return list(nets)
+
+    @staticmethod
+    def _should_skip_interface(name: str) -> bool:
+        if not name:
+            return False
+        return any(pattern.match(name) for pattern in _SKIP_IFACE_PATTERNS)
 
     def _extract_scope(self, scopes, key):
         for scope in scopes:
@@ -312,15 +406,29 @@ class NetworkScanner:
         try:
             cam = self._create_onvif_camera(ip, port, user, password)
             info = cam.devicemgmt.GetDeviceInformation()
+            has_ptz = self._probe_ptz_capability(cam)
             return {
                 "manufacturer": info.Manufacturer,
                 "model": info.Model,
                 "firmware": info.FirmwareVersion,
                 "serial": info.SerialNumber,
+                "has_ptz": has_ptz,
             }
         except Exception as e:
             logger.error(f"GetInfo failed: {e}")
             raise
+
+    @staticmethod
+    def _probe_ptz_capability(cam) -> bool:
+        """Best-effort PTZ-capability check via ONVIF GetCapabilities."""
+        try:
+            caps = cam.devicemgmt.GetCapabilities({"Category": "All"})
+            ptz_caps = getattr(caps, "PTZ", None)
+            xaddr = getattr(ptz_caps, "XAddr", None) if ptz_caps else None
+            return bool(xaddr)
+        except Exception as e:
+            logger.debug("PTZ capability probe failed: %s", e)
+            return False
 
     def get_stream_uri(self, ip, port, user, password, profile_index=0):
         """Get RTSP URI."""

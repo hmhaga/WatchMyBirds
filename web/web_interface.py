@@ -35,6 +35,7 @@ from config import (
     get_settings_payload,
     update_runtime_settings,
 )
+from core.species_colours import assign_species_colours as _assign_species_colours
 from utils.review_metadata import (
     BBOX_REVIEW_CORRECT,
     BBOX_REVIEW_WRONG,
@@ -48,7 +49,8 @@ from web.power_actions import (
     is_power_management_available,
     schedule_power_action,
 )
-from core.species_colours import assign_species_colours as _assign_species_colours
+from web.security import error_response as _error_response
+from web.security import safe_log_value as _slv
 from web.services import (
     db_service,
     gallery_service,
@@ -57,8 +59,6 @@ from web.services import (
 )
 
 # In-Memory Caches
-_species_summary_cache = {"timestamp": 0, "payload": None}
-
 # Best-of-Species board cache: profiling shows
 # `build_species_story_board(all_detections)` costs ~3.5 s per `/` render
 # (alone half of the 8 s wall time). The board is an all-time aggregate
@@ -70,6 +70,17 @@ _species_summary_cache = {"timestamp": 0, "payload": None}
 # "modal_dets": list}``; readers check ``time.time() - timestamp < TTL``.
 _BEST_SPECIES_CACHE_TTL_SECONDS = 5 * 60
 _best_species_cache: dict = {"timestamp": 0.0, "payload": None}
+
+
+def invalidate_best_species_cache() -> None:
+    """Drop the Best-of-Species memo so the next Live render rebuilds it.
+
+    Mirrors ``gallery_service.invalidate_cache()`` — blueprints that mutate
+    detections call this rather than reaching into ``_best_species_cache``.
+    """
+    _best_species_cache["timestamp"] = 0.0
+    _best_species_cache["payload"] = None
+
 
 # All-time species-count cache. The stream page only renders the total species
 # scalar, so it should not run the heavier analytics summary (total detections
@@ -157,6 +168,34 @@ def create_web_interface(detection_manager, system_monitor=None):
             cache_control += ", immutable"
         response.headers["Cache-Control"] = cache_control
         return response
+
+    def _send_contained_upload(
+        root: os.PathLike,
+        relative: str,
+        *,
+        max_age: int,
+        private: bool = True,
+        immutable: bool = False,
+    ):
+        # Reject any user-supplied path whose realpath escapes the upload root,
+        # then hand the rooted directory + relative path to send_from_directory
+        # so werkzeug's safe_join runs against the correct boundary.
+        root_path = Path(root).resolve()
+        try:
+            candidate = (root_path / relative).resolve()
+            candidate.relative_to(root_path)
+        except (ValueError, OSError):
+            return "Not found", 404
+        if not candidate.is_file():
+            return "Not found", 404
+        rel = candidate.relative_to(root_path).as_posix()
+        return _send_cached_static_file(
+            root_path,
+            rel,
+            max_age=max_age,
+            private=private,
+            immutable=immutable,
+        )
 
     def _get_species_key_local(det: dict | None) -> str:
         if not det:
@@ -295,10 +334,14 @@ def create_web_interface(detection_manager, system_monitor=None):
         Quality key for species cover and summary selection.
         Priority: HUMAN favorite or KI gallery-pick (peers), then score.
         """
-        priority = 1 if (
-            int(det.get("is_favorite") or 0)
-            or int(det.get("is_gallery_eligible") or 0)
-        ) else 0
+        priority = (
+            1
+            if (
+                int(det.get("is_favorite") or 0)
+                or int(det.get("is_gallery_eligible") or 0)
+            )
+            else 0
+        )
         score = float(det.get("score") or 0.0)
         return (priority, score)
 
@@ -574,8 +617,13 @@ def create_web_interface(detection_manager, system_monitor=None):
         try:
             with db_service.closing_connection() as conn:
                 rows = db_service.fetch_detection_species_summary(conn, date_iso)
-        except Exception as e:
-            logger.error(f"Error fetching daily species summary for {date_iso}: {e}")
+        except Exception as exc:
+            logger.error(
+                "Error fetching daily species summary for %s [%s]",
+                _slv(date_iso),
+                type(exc).__name__,
+                exc_info=True,
+            )
             rows = []
 
         summary = []
@@ -634,7 +682,9 @@ def create_web_interface(detection_manager, system_monitor=None):
         return key
 
     secret_key_path = Path(output_dir) / ".flask_secret_key"
-    server.secret_key = os.environ.get("FLASK_SECRET_KEY") or _load_or_create_secret_key(secret_key_path)
+    server.secret_key = os.environ.get(
+        "FLASK_SECRET_KEY"
+    ) or _load_or_create_secret_key(secret_key_path)
     server.config["PERMANENT_SESSION_LIFETIME"] = 28800  # 8 hours in seconds
     server.config["SESSION_COOKIE_HTTPONLY"] = True
     server.config["SESSION_COOKIE_SAMESITE"] = "Lax"
@@ -648,14 +698,14 @@ def create_web_interface(detection_manager, system_monitor=None):
         if "_csrf_token" not in session:
             session["_csrf_token"] = secrets.token_hex(32)
 
-        warn = (
-            session.get("authenticated")
-            and _auth.is_default_password()
-        )
+        is_authenticated = bool(session.get("authenticated"))
+        warn = is_authenticated and _auth.is_default_password()
         return {
             "warn_default_password": warn,
             "setup_password_required": _auth.should_require_password_setup(),
             "csrf_token": session["_csrf_token"],
+            "is_authenticated": is_authenticated,
+            "can_moderate": is_authenticated,
         }
 
     # CSRF validation for state-changing requests
@@ -669,12 +719,10 @@ def create_web_interface(detection_manager, system_monitor=None):
             return
 
         # Token from form field or X-CSRF-Token header
-        token = (
-            request.form.get("_csrf_token")
-            or request.headers.get("X-CSRF-Token")
-        )
+        token = request.form.get("_csrf_token") or request.headers.get("X-CSRF-Token")
         if not token or token != session.get("_csrf_token"):
             from flask import abort
+
             abort(403)
 
     # Register Blueprints
@@ -783,7 +831,9 @@ def create_web_interface(detection_manager, system_monitor=None):
         model_id = getattr(companion_client, "model_id", "<unconfigured>")
         logger.info(
             "Companion v1 backend registered (enabled=%s, backend=%s, model=%s)",
-            companion_service.enabled, backend, model_id,
+            companion_service.enabled,
+            backend,
+            model_id,
         )
     except Exception as exc:
         logger.error("Companion v1 backend registration failed: %s", exc, exc_info=True)
@@ -798,12 +848,9 @@ def create_web_interface(detection_manager, system_monitor=None):
         @server.route("/uploads/originals/<path:filename>")
         def serve_original(filename):
             # filename typically includes date folder e.g. "20240120/file.jpg"
-            full_path = path_mgr.originals_dir / filename
-            if not full_path.exists():
-                return "Not found", 404
-            return _send_cached_static_file(
-                os.path.dirname(full_path),
-                os.path.basename(full_path),
+            return _send_contained_upload(
+                path_mgr.originals_dir,
+                filename,
                 max_age=IMAGE_CACHE_SECONDS,
                 private=True,
                 immutable=True,
@@ -824,19 +871,18 @@ def create_web_interface(detection_manager, system_monitor=None):
                     preview_name = re.sub(
                         r"_crop_\d+\.webp$", "_preview.webp", filename
                     )
-                    preview_path = path_mgr.thumbs_dir / preview_name
-                    if preview_name != filename and preview_path.exists():
-                        return _send_cached_static_file(
-                            os.path.dirname(preview_path),
-                            os.path.basename(preview_path),
+                    if preview_name != filename:
+                        return _send_contained_upload(
+                            path_mgr.thumbs_dir,
+                            preview_name,
                             max_age=IMAGE_CACHE_SECONDS,
                             private=True,
                             immutable=True,
                         )
                     return "Not found and could not regenerate", 404
-            return _send_cached_static_file(
-                os.path.dirname(full_path),
-                os.path.basename(full_path),
+            return _send_contained_upload(
+                path_mgr.thumbs_dir,
+                filename,
                 max_age=IMAGE_CACHE_SECONDS,
                 private=True,
                 immutable=True,
@@ -854,12 +900,23 @@ def create_web_interface(detection_manager, system_monitor=None):
                         return "Regeneration failed", 500
                 else:
                     return "Not found and could not regenerate", 404
-            return _send_cached_static_file(
-                os.path.dirname(full_path),
-                os.path.basename(full_path),
+            return _send_contained_upload(
+                path_mgr.optimized_dir,
+                filename,
                 max_age=IMAGE_CACHE_SECONDS,
                 private=True,
                 immutable=True,
+            )
+
+        @server.route("/uploads/derivatives/ptz_snapshots/<path:filename>")
+        @login_required
+        def serve_ptz_snapshot(filename):
+            return _send_contained_upload(
+                path_mgr.ptz_snapshots_dir,
+                filename,
+                max_age=60,
+                private=True,
+                immutable=False,
             )
 
         def daily_species_summary_route():
@@ -910,7 +967,7 @@ def create_web_interface(detection_manager, system_monitor=None):
             if not _video_feed_semaphore.acquire(blocking=False):
                 logger.info(
                     "MJPEG /video_feed refused (cap=2 reached) ip=%s",
-                    request.remote_addr,
+                    _slv(request.remote_addr),
                 )
                 return (
                     "Stream cap reached; close other tabs and retry.\n",
@@ -932,7 +989,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                             logger.info(
                                 "MJPEG /video_feed self-closed after %ss ip=%s",
                                 MAX_STREAM_SECONDS,
-                                request.remote_addr,
+                                _slv(request.remote_addr),
                             )
                             return
                         loop_start = time.time()
@@ -957,7 +1014,9 @@ def create_web_interface(detection_manager, system_monitor=None):
 
                         yield (
                             b"--frame\r\n"
-                            b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
+                            b"Content-Type: image/jpeg\r\n\r\n"
+                            + buffer.tobytes()
+                            + b"\r\n"
                         )
 
                         elapsed = time.time() - loop_start
@@ -1054,9 +1113,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                     ),
                     200,
                 )
-            except Exception as e:
-                logger.error(f"Error starting ingest: {e}")
-                return jsonify({"status": "error", "message": str(e)}), 500
+            except Exception as exc:
+                return _error_response("Error starting ingest", exc)
 
         # --- ONVIF Discovery API ---
         @server.route("/api/onvif/discover", methods=["GET"])
@@ -1071,9 +1129,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                     return jsonify({"status": "success", "cameras": []})
 
                 return jsonify({"status": "success", "cameras": cameras})
-            except Exception as e:
-                logger.error(f"ONVIF Discovery route failed: {e}")
-                return jsonify({"status": "error", "message": str(e)}), 500
+            except Exception as exc:
+                return _error_response("ONVIF Discovery route failed", exc)
 
         @server.route("/api/onvif/get_stream_uri", methods=["POST"])
         @login_required
@@ -1099,9 +1156,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                     return jsonify(
                         {"status": "error", "message": "Could not retrieve URI"}
                     ), 404
-            except Exception as e:
-                logger.error(f"ONVIF Stream URI route failed: {e}")
-                return jsonify({"status": "error", "message": str(e)}), 500
+            except Exception as exc:
+                return _error_response("ONVIF Stream URI route failed", exc)
 
         # --- Camera Management API ---
         @server.route("/api/cameras", methods=["GET"])
@@ -1111,9 +1167,8 @@ def create_web_interface(detection_manager, system_monitor=None):
             try:
                 cameras = onvif_service.get_saved_cameras()
                 return jsonify({"status": "success", "cameras": cameras})
-            except Exception as e:
-                logger.error(f"Camera list failed: {e}")
-                return jsonify({"status": "error", "message": str(e)}), 500
+            except Exception as exc:
+                return _error_response("Camera list failed", exc)
 
         @server.route("/api/cameras", methods=["POST"])
         @login_required
@@ -1142,9 +1197,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                 return jsonify({"status": "success", "camera": result})
             except ValueError as e:
                 return jsonify({"status": "error", "message": str(e)}), 400
-            except Exception as e:
-                logger.error(f"Camera add failed: {e}")
-                return jsonify({"status": "error", "message": str(e)}), 500
+            except Exception as exc:
+                return _error_response("Camera add failed", exc)
 
         @server.route("/api/cameras/<int:camera_id>", methods=["DELETE"])
         @login_required
@@ -1157,9 +1211,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                     return jsonify(
                         {"status": "error", "message": "Camera not found"}
                     ), 404
-            except Exception as e:
-                logger.error(f"Camera delete failed: {e}")
-                return jsonify({"status": "error", "message": str(e)}), 500
+            except Exception as exc:
+                return _error_response("Camera delete failed", exc)
 
         @server.route("/api/cameras/<int:camera_id>", methods=["PUT"])
         @login_required
@@ -1180,9 +1233,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                     return jsonify(
                         {"status": "error", "message": "Camera not found"}
                     ), 404
-            except Exception as e:
-                logger.error(f"Camera update failed: {e}")
-                return jsonify({"status": "error", "message": str(e)}), 500
+            except Exception as exc:
+                return _error_response("Camera update failed", exc)
 
         @server.route("/api/cameras/<int:camera_id>/test", methods=["POST"])
         @login_required
@@ -1204,12 +1256,14 @@ def create_web_interface(detection_manager, system_monitor=None):
                 )
 
                 if details:
+                    has_ptz = bool(details.get("has_ptz", False))
                     # Update test result via service
                     onvif_service.update_test_result(
                         camera_id,
                         success=True,
                         manufacturer=details.get("manufacturer", ""),
                         model=details.get("model", ""),
+                        has_ptz=has_ptz,
                     )
                     return jsonify(
                         {
@@ -1218,7 +1272,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                                 "manufacturer": details.get("manufacturer"),
                                 "model": details.get("model"),
                                 "firmware": details.get("firmware"),
-                                "has_ptz": False,
+                                "has_ptz": has_ptz,
                             },
                         }
                     )
@@ -1227,9 +1281,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                     return jsonify(
                         {"status": "error", "message": "Connection failed."}
                     ), 400
-            except Exception as e:
-                logger.error(f"Camera test failed: {e}")
-                return jsonify({"status": "error", "message": str(e)}), 500
+            except Exception as exc:
+                return _error_response("Camera test failed", exc)
 
         @server.route("/api/cameras/<int:camera_id>/use", methods=["POST"])
         @login_required
@@ -1249,12 +1302,18 @@ def create_web_interface(detection_manager, system_monitor=None):
                     ), 404
 
                 logger.info(
-                    f"Activating camera {camera_id}: {cam.get('name')} @ {cam['ip']}:{cam.get('port', 80)}"
+                    "Activating camera %s: %s @ %s:%s",
+                    _slv(camera_id),
+                    _slv(cam.get("name")),
+                    _slv(cam.get("ip")),
+                    _slv(cam.get("port", 80)),
                 )
 
                 # Check if credentials are present
                 if not cam.get("username") or not cam.get("password"):
-                    logger.warning(f"Camera {camera_id} has no credentials stored")
+                    logger.warning(
+                        "Camera %s has no credentials stored", _slv(camera_id)
+                    )
                     return jsonify(
                         {
                             "status": "error",
@@ -1270,13 +1329,19 @@ def create_web_interface(detection_manager, system_monitor=None):
                         username=cam.get("username", ""),
                         password=cam.get("password", ""),
                     )
-                    logger.info(f"Retrieved RTSP URI for camera {camera_id}")
-                except Exception as e:
+                    logger.info("Retrieved RTSP URI for camera %s", _slv(camera_id))
+                except Exception as exc:
                     logger.error(
-                        f"Failed to get stream URI for camera {camera_id}: {e}"
+                        "Failed to get stream URI for camera %s [%s]",
+                        _slv(camera_id),
+                        type(exc).__name__,
+                        exc_info=True,
                     )
                     return jsonify(
-                        {"status": "error", "message": f"ONVIF connection failed: {e}"}
+                        {
+                            "status": "error",
+                            "message": "ONVIF connection failed.",
+                        }
                     ), 400
 
                 if not uri:
@@ -1301,8 +1366,10 @@ def create_web_interface(detection_manager, system_monitor=None):
                 )
 
                 logger.info(
-                    f"Camera {camera_id} activated: mode={resolved['effective_mode']} "
-                    f"video_source={resolved['video_source'][:40]}"
+                    "Camera %s activated: mode=%s video_source=%s",
+                    _slv(camera_id),
+                    _slv(resolved["effective_mode"]),
+                    _slv(resolved["video_source"][:40]),
                 )
 
                 return jsonify(
@@ -1363,12 +1430,7 @@ def create_web_interface(detection_manager, system_monitor=None):
 
             # Extract unique species for the dropdown
             species_list = sorted(
-                list(
-                    set(
-                        _get_species_key_local(det)
-                        for det in detections
-                    )
-                )
+                list(set(_get_species_key_local(det) for det in detections))
             )
 
             # Apply Filters
@@ -1496,6 +1558,15 @@ def create_web_interface(detection_manager, system_monitor=None):
             date_iso = request.form.get("date_iso")
             det_ids = request.form.getlist("ids")
 
+            # Guard: date_iso flows into redirect URLs below. Reject anything
+            # that isn't a strict YYYY-MM-DD so an attacker cannot use
+            # this endpoint as an open-redirect / path-traversal vector.
+            if date_iso is not None:
+                try:
+                    datetime.strptime(date_iso, "%Y-%m-%d")
+                except (TypeError, ValueError):
+                    return redirect("/gallery")
+
             # Handle reject_all BEFORE checking det_ids (it doesn't need selections)
             if action == "reject_all":
                 if not date_iso:
@@ -1517,7 +1588,9 @@ def create_web_interface(detection_manager, system_monitor=None):
                     if all_ids:
                         db_service.reject_detections(conn, all_ids)
                         logger.info(
-                            f"Rejected ALL {len(all_ids)} detections for {date_iso}"
+                            "Rejected ALL %d detections for %s",
+                            len(all_ids),
+                            _slv(date_iso),
                         )
 
                 # Reset caches
@@ -1809,9 +1882,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                                 _build_detection_view_dict(
                                     sib,
                                     species_key=sib_species_key,
-                                    common_name=_get_common_name_local(
-                                        sib_species_key
-                                    ),
+                                    common_name=_get_common_name_local(sib_species_key),
                                     include_decision_state=True,
                                     extra={
                                         "thumb_url": (
@@ -2049,9 +2120,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                                 _build_detection_view_dict(
                                     sib,
                                     species_key=sib_species_key,
-                                    common_name=_get_common_name_local(
-                                        sib_species_key
-                                    ),
+                                    common_name=_get_common_name_local(sib_species_key),
                                     include_decision_state=True,
                                     extra={
                                         "thumb_url": (
@@ -2138,9 +2207,7 @@ def create_web_interface(detection_manager, system_monitor=None):
             # globally across other observations.
             nav_index_by_detection_id: dict[int, int] = {}
             nav_order = [
-                det
-                for obs in enriched_observations
-                for det in obs["all_detections"]
+                det for obs in enriched_observations for det in obs["all_detections"]
             ]
             for idx, det in enumerate(nav_order):
                 det_id = int(det.get("detection_id") or 0)
@@ -2686,7 +2753,9 @@ def create_web_interface(detection_manager, system_monitor=None):
                         "bbox_w": det.get("bbox_w", 0.0) or 0.0,
                         "bbox_h": det.get("bbox_h", 0.0) or 0.0,
                         "is_favorite": bool(int(det.get("is_favorite") or 0)),
-                        "is_gallery_eligible": bool(int(det.get("is_gallery_eligible") or 0)),
+                        "is_gallery_eligible": bool(
+                            int(det.get("is_gallery_eligible") or 0)
+                        ),
                     }
                 )
 
@@ -2742,9 +2811,7 @@ def create_web_interface(detection_manager, system_monitor=None):
                 vs_ids = {d.get("detection_id") for d in visual_summary}
                 extra_ids = board_det_ids - vs_ids
                 if extra_ids:
-                    today_rows_by_id = {
-                        d.get("detection_id"): d for d in today_rows
-                    }
+                    today_rows_by_id = {d.get("detection_id"): d for d in today_rows}
                     for det_id in extra_ids:
                         raw = today_rows_by_id.get(det_id)
                         if raw:
@@ -2822,10 +2889,9 @@ def create_web_interface(detection_manager, system_monitor=None):
                     frames_per_species=3,
                 )
                 best_species_board = _enrich_species_board(raw_best_board)
-                best_species_preview = (
-                    best_species_board.get("featured", [])
-                    + best_species_board.get("grid", [])
-                )
+                best_species_preview = best_species_board.get(
+                    "featured", []
+                ) + best_species_board.get("grid", [])
 
                 for raw in raw_best_modal_rows:
                     best_species_modal_dets.append(_build_modal_detection(raw))
@@ -2984,10 +3050,12 @@ def create_web_interface(detection_manager, system_monitor=None):
         ALLOWED_ROUTES = {"/", "/analytics"}
         target = request.args.get("route", "/").strip()
         if target not in ALLOWED_ROUTES:
-            return jsonify({
-                "error": "route not whitelisted",
-                "allowed": sorted(ALLOWED_ROUTES),
-            }), 400
+            return jsonify(
+                {
+                    "error": "route not whitelisted",
+                    "allowed": sorted(ALLOWED_ROUTES),
+                }
+            ), 400
 
         try:
             top_n = max(1, min(100, int(request.args.get("top", "30"))))
@@ -3017,29 +3085,33 @@ def create_web_interface(detection_manager, system_monitor=None):
 
         rows = []
         for func, (cc, nc, tt, ct, _callers) in stats.stats.items():
-            rows.append({
-                "file": func[0],
-                "line": func[1],
-                "func": func[2],
-                "ncalls": nc,
-                "tottime": round(tt, 4),
-                "cumtime": round(ct, 4),
-            })
+            rows.append(
+                {
+                    "file": func[0],
+                    "line": func[1],
+                    "func": func[2],
+                    "ncalls": nc,
+                    "tottime": round(tt, 4),
+                    "cumtime": round(ct, 4),
+                }
+            )
         rows.sort(
             key=lambda r: r["cumtime" if sort_key == "cumulative" else "tottime"],
             reverse=True,
         )
         rows = rows[:top_n]
 
-        return jsonify({
-            "route": target,
-            "status": resp.status_code,
-            "response_bytes": len(resp.data),
-            "wall_ms": wall_ms,
-            "sort": sort_key,
-            "top": rows,
-            "text": text_dump,
-        })
+        return jsonify(
+            {
+                "route": target,
+                "status": resp.status_code,
+                "response_bytes": len(resp.data),
+                "wall_ms": wall_ms,
+                "sort": sort_key,
+                "top": rows,
+                "text": text_dump,
+            }
+        )
 
     RUNTIME_BOOL_KEYS = {
         "DAY_AND_NIGHT_CAPTURE",
@@ -3220,7 +3292,8 @@ def create_web_interface(detection_manager, system_monitor=None):
         # Kernel
         try:
             data["kernel"] = platform.release()
-        except Exception:
+        except OSError:
+            # platform.release reads /proc on Linux; not available everywhere.
             pass
 
         # OS
@@ -3231,7 +3304,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                         if line.startswith("PRETTY_NAME="):
                             data["os"] = line.split("=")[1].strip().strip('"')
                             break
-        except Exception:
+        except OSError:
+            # /etc/os-release missing or unreadable on this host.
             pass
 
         # Bootloader
@@ -3251,7 +3325,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                             if len(parts) > 1:
                                 data["bootloader"] = parts[1].strip()
                                 break
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
+            # rpi-eeprom-update missing or denied; bootloader stays "Unknown".
             pass
 
         return jsonify(data)
@@ -3288,9 +3363,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                 ),
                 200,
             )
-        except Exception as e:
-            logger.error(f"Error initiating shutdown: {e}")
-            return jsonify({"status": "error", "message": str(e)}), 500
+        except Exception as exc:
+            return _error_response("Error initiating shutdown", exc)
 
     @server.route("/api/system/restart", methods=["POST"])
     @login_required
@@ -3323,9 +3397,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                 ),
                 200,
             )
-        except Exception as e:
-            logger.error(f"Error initiating restart: {e}")
-            return jsonify({"status": "error", "message": str(e)}), 500
+        except Exception as exc:
+            return _error_response("Error initiating restart", exc)
 
     @server.route("/api/system/stats", methods=["GET"])
     @login_required
@@ -3347,16 +3420,17 @@ def create_web_interface(detection_manager, system_monitor=None):
                     "free_gb": round(disk_usage.free / (1024**3), 1),
                     "percent": disk_usage.percent,
                 }
-            except Exception:
+            except (OSError, ValueError):
+                # disk_usage path missing or invalid; leave disk=None.
                 pass
 
             # Get CPU temperature
             temp = None
             try:
                 # Raspberry Pi: use vcgencmd
-                import subprocess
+                import subprocess as _sp
 
-                result = subprocess.run(
+                result = _sp.run(
                     ["vcgencmd", "measure_temp"],
                     capture_output=True,
                     text=True,
@@ -3366,8 +3440,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                     # Output: "temp=45.0'C"
                     temp_str = result.stdout.strip()
                     temp = float(temp_str.replace("temp=", "").replace("'C", ""))
-            except Exception:
-                # Fallback: try psutil sensors
+            except (OSError, ValueError, ImportError):
+                # vcgencmd missing/timed-out; fall back to psutil sensors.
                 try:
                     temps = psutil.sensors_temperatures()
                     if temps:
@@ -3375,7 +3449,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                             if entries:
                                 temp = entries[0].current
                                 break
-                except Exception:
+                except (AttributeError, OSError):
+                    # No temperature sensors exposed on this host.
                     pass
 
             response = {"status": "success", "cpu": cpu_percent, "ram": mem.percent}
@@ -3384,8 +3459,8 @@ def create_web_interface(detection_manager, system_monitor=None):
             if disk is not None:
                 response["disk"] = disk
             return jsonify(response)
-        except Exception as e:
-            return jsonify({"status": "error", "message": str(e)}), 500
+        except Exception as exc:
+            return _error_response("Error fetching system stats", exc)
 
     # ==========================================================================
     # INBOX ROUTES --- MOVED TO web/blueprints/inbox.py ---
@@ -3431,7 +3506,8 @@ def create_web_interface(detection_manager, system_monitor=None):
                 response["decision_state_counts"] = dict(
                     detection_manager.decision_state_counts
                 )
-            except Exception:
+            except (AttributeError, TypeError):
+                # Counter attribute missing or non-iterable; omit field.
                 pass
 
             return jsonify(response)
@@ -3526,11 +3602,17 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     # Paths that are polled by the frontend or serve static content
     _LOG_SKIP_PREFIXES = (
-        "/assets/", "/favicon", "/uploads/",
-        "/api/review-thumb/", "/api/thumb/",
-        "/api/v1/health", "/api/v1/weather/",
-        "/api/v1/system/versions", "/api/v1/system/diagnostics",
-        "/api/v1/public/go2rtc/health", "/api/v1/cameras",
+        "/assets/",
+        "/favicon",
+        "/uploads/",
+        "/api/review-thumb/",
+        "/api/thumb/",
+        "/api/v1/health",
+        "/api/v1/weather/",
+        "/api/v1/system/versions",
+        "/api/v1/system/diagnostics",
+        "/api/v1/public/go2rtc/health",
+        "/api/v1/cameras",
         "/healthz",
         "/logs",
         # High-frequency status polls: zero forensic value, dominate the log.
@@ -3549,10 +3631,10 @@ def create_web_interface(detection_manager, system_monitor=None):
         if not request.path.startswith(_LOG_SKIP_PREFIXES):
             security_logger.info(
                 "%s %s %s ip=%s user=%s",
-                request.method,
-                request.path,
+                _slv(request.method),
+                _slv(request.path),
                 response.status_code,
-                request.remote_addr,
+                _slv(request.remote_addr),
                 "authenticated" if session.get("authenticated") else "anonymous",
             )
         return response

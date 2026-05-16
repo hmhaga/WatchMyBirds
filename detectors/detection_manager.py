@@ -19,16 +19,17 @@ from datetime import datetime
 
 from camera.video_capture import VideoCapture
 from config import get_config
+from core.ptz_tracking_core import AutoPtzController
 from detectors.classifier import ImageClassifier
 from detectors.interfaces.classification import DecisionState
 from detectors.motion_detector import MotionDetector
+from detectors.od_classes import is_bird_od_class
 from detectors.services import NotificationService, PersistenceService
 from detectors.services.capability_registry import build_default_registry
 from detectors.services.classification_service import ClassificationService
 from detectors.services.crop_service import CropService
 from detectors.services.decision_policy_service import DecisionPolicyService
 from detectors.services.detection_service import DetectionService
-from detectors.od_classes import is_bird_od_class
 from detectors.services.scoring_pipeline import ScoringResult, compute_detection_signals
 from detectors.services.temporal_decision_service import TemporalDecisionService
 from logging_config import get_logger
@@ -189,6 +190,7 @@ class DetectionManager:
         self.decision_policy_service = DecisionPolicyService()
         self.temporal_decision_service = TemporalDecisionService()
         self.capability_registry = build_default_registry()
+        self.auto_ptz_controller = AutoPtzController()
 
         logger.info("DetectionManager V2 initialized (with Services)")
 
@@ -213,7 +215,27 @@ class DetectionManager:
         ``od_class_name`` routes deep-review reanalysis through the same
         non-bird gate as live ingest. Omitting it preserves the legacy
         bird-track-only behaviour for callers that have no class info.
+
+        Builds the same per-class resolver as the live `_processing_loop`
+        so deep-review reanalysis uses the model's per-class floors when
+        a v2-coco-shaped detector is loaded, and falls back to the scalar
+        for 5-class models.
         """
+        detection_service = getattr(self, "detection_service", None)
+        detector_obj = getattr(detection_service, "_detector", None)
+        underlying = getattr(detector_obj, "model", None) if detector_obj else None
+        per_class_map: dict[str, float] = (
+            getattr(underlying, "conf_per_class_name", {}) or {}
+            if underlying is not None
+            else {}
+        )
+        global_non_bird_floor = float(
+            self.config.get("NON_BIRD_CONFIRM_THRESHOLD", 0.80)
+        )
+
+        def non_bird_floor_for(class_name: str) -> float:
+            return float(per_class_map.get(class_name, global_non_bird_floor))
+
         return compute_detection_signals(
             bbox=bbox,
             frame_shape=frame_shape,
@@ -225,9 +247,8 @@ class DetectionManager:
             capability_registry=self.capability_registry,
             species_key=species_key,
             od_class_name=od_class_name,
-            non_bird_confirm_threshold=self.config.get(
-                "NON_BIRD_CONFIRM_THRESHOLD", 0.80
-            ),
+            non_bird_confirm_threshold=global_non_bird_floor,
+            non_bird_confirm_threshold_fn=non_bird_floor_for,
         )
 
     def run_exhaustive_scan(self, frame):
@@ -316,6 +337,8 @@ class DetectionManager:
                     self.video_capture.cap.release()
             except Exception as e:
                 logger.error(f"Error releasing video capture: {e}")
+
+        self.auto_ptz_controller.stop()
 
         logger.info("DetectionManager V2 stopped.")
 
@@ -465,6 +488,10 @@ class DetectionManager:
             # Motion detection gate
             if self.config.get("MOTION_DETECTION_ENABLED", True):
                 if not self.motion_detector.detect(raw_frame):
+                    try:
+                        self.auto_ptz_controller.handle_no_detection()
+                    except Exception:
+                        logger.exception("Auto PTZ no-detection update failed")
                     time.sleep(0.1)
                     continue
 
@@ -537,6 +564,20 @@ class DetectionManager:
                     }
                 )
 
+            try:
+                frame_for_ptz = (
+                    original_frame if original_frame is not None else raw_frame
+                )
+                if object_detected:
+                    self.auto_ptz_controller.handle_detections(
+                        frame_shape=frame_for_ptz.shape,
+                        detections=detection_info_list,
+                    )
+                else:
+                    self.auto_ptz_controller.handle_no_detection()
+            except Exception:
+                logger.exception("Auto PTZ update failed")
+
             # Collect timing and log a periodic summary
             self._det_times.append(det_ms)
             now_mono = time.monotonic()
@@ -560,15 +601,25 @@ class DetectionManager:
                         "[DET+CLS] %ds summary: %d frames | "
                         "DET avg %dms (min %dms / max %dms) | "
                         "CLS %d samples avg %dms (min %dms / max %dms)",
-                        window_s, n_det,
-                        det_avg, det_lo, det_hi,
-                        n_cls, cls_avg, cls_lo, cls_hi,
+                        window_s,
+                        n_det,
+                        det_avg,
+                        det_lo,
+                        det_hi,
+                        n_cls,
+                        cls_avg,
+                        cls_lo,
+                        cls_hi,
                     )
                 else:
                     logger.info(
                         "[DET] %ds summary: %d frames | "
                         "avg %dms | min %dms | max %dms | CLS no samples",
-                        window_s, n_det, det_avg, det_lo, det_hi,
+                        window_s,
+                        n_det,
+                        det_avg,
+                        det_lo,
+                        det_hi,
                     )
                 self._det_times.clear()
                 self._cls_times.clear()
@@ -696,25 +747,43 @@ class DetectionManager:
             best_score = 0.0
             best_thumb_path = None
 
-            from detectors.interfaces.persistence import DetectionData
-
             # Resolve the active save threshold once per frame so Filter (A)
             # uses exactly the same value as the detect-loop gate at
             # detector.py:635 (any-above-threshold). Without this, a frame
             # admitted by ONE strong detection would also persist all the
             # weaker companion detections — the root cause of issue #32.
             from config import effective_save_threshold
+            from detectors.interfaces.persistence import DetectionData
 
             detector_obj = getattr(self.detection_service, "_detector", None)
-            underlying = (
-                getattr(detector_obj, "model", None) if detector_obj else None
-            )
+            underlying = getattr(detector_obj, "model", None) if detector_obj else None
             detector_conf = (
                 getattr(underlying, "conf_threshold_default", None)
                 if underlying is not None
                 else None
             )
             save_thr = effective_save_threshold(self.config, detector_conf)
+
+            # Build the per-class non-bird floor resolver once per frame.
+            # Reads the detector's per-class map (v2-coco and later);
+            # falls back to the config scalar NON_BIRD_CONFIRM_THRESHOLD
+            # for any class the model didn't ship a threshold for
+            # (covers 5-class models entirely).
+            per_class_map: dict[str, float] = (
+                getattr(underlying, "conf_per_class_name", {}) or {}
+                if underlying is not None
+                else {}
+            )
+            global_non_bird_floor = float(
+                self.config.get("NON_BIRD_CONFIRM_THRESHOLD", 0.80)
+            )
+
+            def non_bird_floor_for(
+                class_name: str,
+                _map: dict[str, float] = per_class_map,
+                _floor: float = global_non_bird_floor,
+            ) -> float:
+                return float(_map.get(class_name, _floor))
 
             for idx, det in enumerate(detection_info_list, start=1):
                 x1, y1, x2, y2 = det["x1"], det["y1"], det["x2"], det["y2"]
@@ -740,13 +809,8 @@ class DetectionManager:
                 # way there. Flip NON_BIRD_DROP_BELOW_CONFIRM=false to keep
                 # them in the DB as UNCERTAIN (e.g. during a Phase-7
                 # bbox-cluster collection window).
-                if not is_bird and self.config.get(
-                    "NON_BIRD_DROP_BELOW_CONFIRM", True
-                ):
-                    non_bird_floor = self.config.get(
-                        "NON_BIRD_CONFIRM_THRESHOLD", 0.80
-                    )
-                    if od_conf < non_bird_floor:
+                if not is_bird and self.config.get("NON_BIRD_DROP_BELOW_CONFIRM", True):
+                    if od_conf < non_bird_floor_for(od_class_name):
                         continue
 
                 # Filter (B): sliding-window burst cap. When too many
@@ -808,9 +872,8 @@ class DetectionManager:
                     capability_registry=self.capability_registry,
                     species_key=species_key,
                     od_class_name=od_class_name,
-                    non_bird_confirm_threshold=self.config.get(
-                        "NON_BIRD_CONFIRM_THRESHOLD", 0.80
-                    ),
+                    non_bird_confirm_threshold=global_non_bird_floor,
+                    non_bird_confirm_threshold_fn=non_bird_floor_for,
                 )
                 score = signals.score
                 agreement = signals.agreement_score
