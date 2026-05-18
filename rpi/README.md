@@ -31,7 +31,7 @@ If the device cannot connect to WiFi after 60 seconds (or has no config), it cre
 
 **Setup Flow:**
 1. Connect your phone/laptop to the AP WiFi.
-2. Open `http://192.168.4.1:80/setup`.
+2. Open `http://192.168.4.1:8050/setup`.
 3. Select your home network and enter the WiFi password.
 4. Choose an admin password for protected pages.
 5. The device saves the config and reboots into **Client Mode**.

@@ -7,7 +7,7 @@ WatchMyBirds supports live camera streaming via two modes: **WebRTC relay** (thr
 ## Streaming Modes
 
 | Mode | Description | Latency |
-|------|-------------|----------|
+|------|-------------|---------|
 | **Relay (WebRTC)** | Camera stream relayed through go2rtc with WebRTC delivery to the browser | Low (~200–500 ms) |
 | **Direct** | Camera stream decoded by ffmpeg and served as MJPEG to the browser | Higher (~1–3 s) |
 
@@ -62,7 +62,7 @@ To use bridge networking:
 
 1. Remove `network_mode: host` from both services
 2. Add a shared Docker network
-3. Map ports explicitly (`1984`, `8554`, `8555/tcp+udp`, `80`)
+3. Map ports explicitly (`1984`, `8554`, `8555/tcp+udp`, `8050`)
 4. Set `GO2RTC_API_BASE=http://go2rtc:1984` (service DNS)
 
 See the comments in `docker-compose.example.yml` for a complete bridge configuration.
@@ -73,7 +73,7 @@ See the comments in `docker-compose.example.yml` for a complete bridge configura
 
 On the Raspberry Pi appliance, both services run natively (no Docker):
 
-- `app.service` — WatchMyBirds application on port 80
+- `app.service` — WatchMyBirds application on port 8050
 - `go2rtc.service` — go2rtc relay on port 1984
 
 The go2rtc config is written to `/opt/app/data/output/go2rtc.yaml` (writable under `ProtectSystem=strict`).
