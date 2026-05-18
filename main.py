@@ -256,7 +256,7 @@ def main():
     from waitress import serve
 
     host = "0.0.0.0"
-    port = int(os.environ.get("PORT", 80))
+    port = int(os.environ.get("PORT", 8050))
     logger.info(f"Starting Waitress server on http://{host}:{port}")
     try:
         # threads=8 because /video_feed holds connections open indefinitely (streaming),

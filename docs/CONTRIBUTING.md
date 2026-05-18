@@ -11,7 +11,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 python main.py
 ```
-The web UI starts on `http://localhost:80`.
+The web UI starts on `http://localhost:8050`.
 
 ### Docker
 ```bash
