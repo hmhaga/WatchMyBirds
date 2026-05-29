@@ -292,7 +292,7 @@
         // narrow so the marquee gets more breathing room. The full
         // labels only show on extra-wide canvases where space is
         // genuinely free.
-        var compact = canvas.width < 1600;
+        var compact = canvas.width < 1200;
         var top = [];
         var bottom = [];
         if (sysInfo.cpu != null) {
@@ -311,7 +311,7 @@
             bottom.push({ text: sysInfo.temp + '°C', sev: sysInfo.tempSev });
         }
         if (sysInfo.freeGb != null) {
-            bottom.push({ text: sysInfo.freeGb + 'GB', sev: sysInfo.diskSev });
+            bottom.push({ text: 'DISK ' + sysInfo.freeGb + 'GB free', sev: sysInfo.diskSev });
         }
         return { top: top, bottom: bottom };
     }
@@ -784,7 +784,7 @@
         }
         var bottom;
         if (weatherData.wind_kph != null) {
-            bottom = 'WIND ' + Math.round(weatherData.wind_kph) + 'KM/H';
+            bottom = 'WIND ' + Math.round(weatherData.wind_kph * 0.27778) + 'm/s';
         } else {
             bottom = (weatherData.is_day === 0) ? 'NIGHT' : 'DAY';
         }
