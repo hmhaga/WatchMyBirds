@@ -311,7 +311,7 @@
             bottom.push({ text: sysInfo.temp + '°C', sev: sysInfo.tempSev });
         }
         if (sysInfo.freeGb != null) {
-            bottom.push({ text: 'DISK ' + sysInfo.freeGb + 'GB free', sev: sysInfo.diskSev });
+            bottom.push({ text: 'HDD ' + sysInfo.freeGb + 'GB', sev: sysInfo.diskSev });
         }
         return { top: top, bottom: bottom };
     }
@@ -784,7 +784,7 @@
         }
         var bottom;
         if (weatherData.wind_kph != null) {
-            bottom = 'WIND ' + Math.round(weatherData.wind_kph * 0.27778) + 'm/s';
+            bottom = 'WIND ' + Math.round(weatherData.wind_kph * 0.27778) + ' M/S';
         } else {
             bottom = (weatherData.is_day === 0) ? 'NIGHT' : 'DAY';
         }
