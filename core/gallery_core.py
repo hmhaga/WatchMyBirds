@@ -1053,6 +1053,13 @@ def get_favorite_species() -> list[str]:
         return fetch_favorite_species(conn)
 
 
+def get_favorite_detection_ids(detection_ids: list[int]) -> list[int]:
+    from utils.db.detections import fetch_favorite_detection_ids
+
+    with closing_connection() as conn:
+        return fetch_favorite_detection_ids(conn, detection_ids)
+
+
 def get_favorites_page(
     *,
     page: int,

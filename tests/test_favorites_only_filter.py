@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from datetime import datetime, timedelta
+from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 import pytest
+from flask.testing import FlaskClient
 
 import config
 from utils import path_manager
@@ -237,6 +239,68 @@ def test_favorites_page_shows_every_favorite_photo_across_species(favorites_fixt
         assert f'data-detection-id="{detection_id}"' in body
     assert f'data-detection-id="{plain_id}"' not in body
     assert 'href="/species/overview?species_key=' not in body
+    assert 'id="favorites-select-all"' in body
+    assert 'id="favorites-batch-actions" hidden' in body
+    assert 'class="form-check-input wm-tile__checkbox"' in body
+    assert "Download Selected (ZIP)" in body
+
+
+def _anonymous_favorites_csrf_token(client: FlaskClient) -> str:
+    with client.session_transaction() as session:
+        session.pop("authenticated", None)
+    response = client.get("/favorites")
+    assert response.status_code == 200
+    assert 'id="favorites-batch-actions" hidden' in response.get_data(as_text=True)
+    with client.session_transaction() as session:
+        return str(session["_csrf_token"])
+
+
+def test_favorites_download_is_available_without_login(
+    favorites_fixture: tuple[FlaskClient, str, int, int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _today_iso, favorite_id, _plain_id = favorites_fixture
+    csrf_token = _anonymous_favorites_csrf_token(client)
+    archive = BytesIO(b"favorite-zip")
+    build_archive = MagicMock(return_value=archive)
+    monkeypatch.setattr(
+        "web.blueprints.gallery.image_download_service.build_download_archive",
+        build_archive,
+    )
+
+    response = client.post(
+        "/api/favorites/download",
+        json={"detection_ids": [favorite_id]},
+        headers={"X-CSRF-Token": csrf_token},
+    )
+
+    assert response.status_code == 200
+    assert response.mimetype == "application/zip"
+    assert response.data == b"favorite-zip"
+    assert response.headers["Content-Disposition"].startswith("attachment;")
+    build_archive.assert_called_once_with([favorite_id])
+
+
+def test_favorites_download_rejects_non_favorites(
+    favorites_fixture: tuple[FlaskClient, str, int, int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, _today_iso, favorite_id, plain_id = favorites_fixture
+    csrf_token = _anonymous_favorites_csrf_token(client)
+    build_archive = MagicMock()
+    monkeypatch.setattr(
+        "web.blueprints.gallery.image_download_service.build_download_archive",
+        build_archive,
+    )
+
+    response = client.post(
+        "/api/favorites/download",
+        json={"detection_ids": [favorite_id, plain_id]},
+        headers={"X-CSRF-Token": csrf_token},
+    )
+
+    assert response.status_code == 400
+    build_archive.assert_not_called()
 
 
 def test_favorites_page_empty_state(local_db_app):

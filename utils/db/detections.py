@@ -1486,6 +1486,27 @@ def fetch_favorite_species(conn: sqlite3.Connection) -> list[str]:
     return [str(row["species_key"]) for row in rows if row["species_key"]]
 
 
+def fetch_favorite_detection_ids(
+    conn: sqlite3.Connection, detection_ids: list[int]
+) -> list[int]:
+    """Return submitted detection ids that are still current favorites."""
+    if not detection_ids:
+        return []
+
+    placeholders = ",".join("?" for _ in detection_ids)
+    rows = conn.execute(
+        f"""
+        SELECT detection_id
+        FROM current_observations
+        WHERE detection_id IN ({placeholders})
+          AND COALESCE(is_favorite, 0) != 0
+          AND (species_key != ? OR unknown_bird)
+        """,
+        [*detection_ids, UNKNOWN_SPECIES_KEY],
+    )
+    return sorted(int(row["detection_id"]) for row in rows)
+
+
 def fetch_favorites_page(
     conn: sqlite3.Connection,
     *,

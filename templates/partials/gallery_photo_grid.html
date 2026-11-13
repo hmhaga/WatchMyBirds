@@ -2,7 +2,15 @@
 {% set can_moderate = session.get('authenticated') %}
 <div class="gallery-grid"{% if gallery_grid_id is defined and gallery_grid_id %} id="{{ gallery_grid_id }}"{% endif %}>
     {% for det in gallery_grid_detections %}
-    <div class="wm-tile fade-in-item" data-detection-id="{{ det.detection_id }}">
+    <div class="wm-tile fade-in-item{% if gallery_selectable|default(false) %} wm-tile--selectable{% endif %}"
+        data-detection-id="{{ det.detection_id }}"{% if gallery_selectable|default(false) %} data-batch-target="detection"{% endif %}>
+        {% if gallery_selectable|default(false) %}
+        <div class="wm-tile__select">
+            <input class="form-check-input wm-tile__checkbox" type="checkbox" data-index="{{ loop.index0 }}"
+                value="{{ det.detection_id }}"
+                aria-label="Select {{ det.common_name }} photo from {{ det.formatted_date }} {{ det.formatted_time }}">
+        </div>
+        {% endif %}
         <div class="wm-tile__media">
             <button type="button" class="wm-tile__button wm-tile__button--fill" data-bs-toggle="modal"
                 data-bs-target="#modal-{{ gallery_modal_group }}-{{ det.detection_id }}">

@@ -209,6 +209,10 @@ def get_favorite_species() -> list[str]:
     return gallery_core.get_favorite_species()
 
 
+def get_favorite_detection_ids(detection_ids: list[int]) -> list[int]:
+    return gallery_core.get_favorite_detection_ids(detection_ids)
+
+
 def get_favorites_page(
     *,
     page: int,

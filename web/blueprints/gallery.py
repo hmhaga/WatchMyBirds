@@ -22,7 +22,17 @@ import math
 import re
 from datetime import datetime
 
-from flask import Blueprint, abort, jsonify, redirect, render_template, request, url_for
+from flask import (
+    Blueprint,
+    Response,
+    abort,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    url_for,
+)
 
 from config import get_config
 from core.species_colours import assign_species_colours as _assign_species_colours
@@ -89,6 +99,55 @@ def daily_species_summary_route():
         )
     summary = view_helpers.get_daily_species_summary(date_iso)
     return jsonify({"date": date_iso, "summary": summary})
+
+
+def favorites_download_route() -> Response | tuple[Response, int]:
+    """Download selected current favorites without requiring authentication."""
+    data = request.get_json(silent=True)
+    raw_ids = data.get("detection_ids") if isinstance(data, dict) else None
+    if not isinstance(raw_ids, list) or not raw_ids or len(raw_ids) > PAGE_SIZE:
+        return jsonify(
+            {
+                "status": "error",
+                "message": f"Select between 1 and {PAGE_SIZE} favorite photos.",
+            }
+        ), 400
+
+    detection_ids: list[int] = []
+    try:
+        for raw_id in raw_ids:
+            if isinstance(raw_id, bool) or not isinstance(raw_id, (int, str)):
+                raise ValueError
+            detection_id = int(raw_id)
+            if detection_id <= 0:
+                raise ValueError
+            if detection_id not in detection_ids:
+                detection_ids.append(detection_id)
+    except ValueError:
+        return jsonify({"status": "error", "message": "Invalid detection ids."}), 400
+
+    favorite_ids = gallery_service.get_favorite_detection_ids(detection_ids)
+    if len(favorite_ids) != len(detection_ids):
+        return jsonify(
+            {
+                "status": "error",
+                "message": "Selected photos must still be favorites.",
+            }
+        ), 400
+
+    archive = image_download_service.build_download_archive(favorite_ids)
+    if archive is None:
+        return jsonify(
+            {"status": "error", "message": "No downloadable favorite photos."}
+        ), 404
+
+    stamp = datetime.now().strftime("%Y%m%d")
+    return send_file(
+        archive,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"watchmybirds_favorites_{stamp}.zip",
+    )
 
 
 @login_required
@@ -1046,6 +1105,12 @@ gallery_bp.add_url_rule(
     endpoint="favorites",
     view_func=favorites_route,
     methods=["GET"],
+)
+gallery_bp.add_url_rule(
+    "/api/favorites/download",
+    endpoint="favorites_download",
+    view_func=favorites_download_route,
+    methods=["POST"],
 )
 gallery_bp.add_url_rule(
     "/species/overview",

@@ -7,6 +7,7 @@
 {% endblock %}
 
 {% block content %}
+{% from 'partials/batch_action_footer.html' import render_batch_action_footer %}
 <nav class="page-control-bar" role="navigation" aria-label="Favorites controls">
     <div class="page-control-bar__left">
         <span class="page-control-bar__title">Favorites</span>
@@ -44,9 +45,26 @@
 <section class="section">
     <h2 class="section__title">All favorite photos</h2>
     {% if detections %}
-    {% with gallery_grid_detections=detections, gallery_modal_group='favorite', gallery_grid_id='favorites-grid', show_gallery_capture_time=true %}
+    <div class="d-flex align-items-center gap-3 mb-3">
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="favorites-select-all"
+                aria-controls="favorites-grid" onclick="toggleFavoritesSelectAll(this)">
+            <label class="form-check-label fw-bold" for="favorites-select-all">Select all photos on this page</label>
+        </div>
+    </div>
+    {% with gallery_grid_detections=detections, gallery_modal_group='favorite', gallery_grid_id='favorites-grid', show_gallery_capture_time=true, gallery_selectable=true %}
     {% include 'partials/gallery_photo_grid.html' %}
     {% endwith %}
+    <div id="favorites-batch-actions" hidden>
+        {{ render_batch_action_footer(
+            footer_id='favoritesBatchFooter',
+            always_visible=true,
+            counter_id='favorites-selected-counter',
+            counter_text='0 photos selected',
+            download_onclick='downloadSelectedFavorites()',
+            download_label='Download Selected (ZIP)'
+        ) }}
+    </div>
     {% else %}
     <div class="empty-state">
         <div class="empty-state__icon">⭐</div>
@@ -82,4 +100,112 @@
 <script src="/assets/js/species_picker.js?v={{ asset_version }}"></script>
 <script src="/assets/js/gallery_utils.js?v={{ asset_version }}"></script>
 <script src="/assets/js/tile_actions.js?v={{ asset_version }}"></script>
+{% if detections %}
+<script>
+    let lastFavoritesSelectionIndex = null;
+
+    function favoritesCheckboxes() {
+        return Array.from(document.querySelectorAll('#favorites-grid .wm-tile__checkbox'));
+    }
+
+    function updateFavoritesSelectionCounter() {
+        const checkboxes = favoritesCheckboxes();
+        const selectedCount = checkboxes.filter(function (checkbox) {
+            return checkbox.checked;
+        }).length;
+        const selectAll = document.getElementById('favorites-select-all');
+        selectAll.checked = selectedCount === checkboxes.length;
+        selectAll.indeterminate = selectedCount > 0 && selectedCount < checkboxes.length;
+        document.getElementById('favorites-batch-actions').hidden = selectedCount === 0;
+        document.getElementById('favorites-selected-counter').textContent =
+            selectedCount + (selectedCount === 1 ? ' photo selected' : ' photos selected');
+    }
+
+    function toggleFavoritesSelectAll(source) {
+        favoritesCheckboxes().forEach(function (checkbox) {
+            checkbox.checked = source.checked;
+        });
+        lastFavoritesSelectionIndex = null;
+        updateFavoritesSelectionCounter();
+    }
+
+    favoritesCheckboxes().forEach(function (checkbox) {
+        checkbox.addEventListener('click', function (event) {
+            const currentIndex = Number(checkbox.dataset.index);
+            if (event.shiftKey && lastFavoritesSelectionIndex !== null) {
+                const minIndex = Math.min(lastFavoritesSelectionIndex, currentIndex);
+                const maxIndex = Math.max(lastFavoritesSelectionIndex, currentIndex);
+                favoritesCheckboxes().forEach(function (target, index) {
+                    if (index >= minIndex && index <= maxIndex) {
+                        target.checked = checkbox.checked;
+                    }
+                });
+            }
+            lastFavoritesSelectionIndex = currentIndex;
+        });
+        checkbox.addEventListener('change', updateFavoritesSelectionCounter);
+    });
+    updateFavoritesSelectionCounter();
+
+    window.downloadSelectedFavorites = async function () {
+        const selectedIds = favoritesCheckboxes()
+            .filter(function (checkbox) { return checkbox.checked; })
+            .map(function (checkbox) { return Number(checkbox.value); });
+        if (!selectedIds.length) {
+            if (window.wmToast) {
+                window.wmToast('Select at least one favorite photo', 'info', 2500);
+            }
+            return;
+        }
+
+        const button = document.querySelector('#favoritesBatchFooter .btn--success');
+        const restoreLabel = button ? button.textContent : null;
+        if (button) {
+            button.disabled = true;
+            button.textContent = 'Preparing…';
+        }
+
+        try {
+            const response = await fetch('/api/favorites/download', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ detection_ids: selectedIds })
+            });
+            if (!response.ok) {
+                const error = await response.json().catch(function () { return {}; });
+                throw new Error(error.message || ('HTTP ' + response.status));
+            }
+
+            const blob = await response.blob();
+            const disposition = response.headers.get('Content-Disposition') || '';
+            const filename = disposition.match(/filename="?([^";]+)"?/);
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename ? filename[1] : 'watchmybirds_favorites.zip';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+
+            if (window.wmToast) {
+                window.wmToast(selectedIds.length + ' favorite photos downloaded', 'success', 3000);
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (window.wmToast) {
+                window.wmToast('Download failed: ' + message, 'error', 4000);
+            } else {
+                alert('Download failed: ' + message);
+            }
+        } finally {
+            if (button) {
+                button.disabled = false;
+                if (restoreLabel) button.textContent = restoreLabel;
+            }
+        }
+    };
+</script>
+{% endif %}
 {% endblock %}
