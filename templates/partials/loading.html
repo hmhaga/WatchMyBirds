@@ -1,0 +1,157 @@
+<div id="loading" role="status" aria-label="Loading">
+  <div class="loading-content">
+
+    <svg id="gears" viewBox="0 0 300 180"
+         xmlns="http://www.w3.org/2000/svg">
+
+      <!-- Large gear -->
+      <g transform="translate(100 90)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="rotate"
+            from="0" to="360"
+            dur="20s"
+            repeatCount="indefinite"/>
+
+          <path id="gear-a" fill="#777"/>
+          <circle r="19" fill="#777"
+                  stroke="#444" stroke-width="1.5"/>
+          <circle r="6" fill="#444"/>
+        </g>
+      </g>
+
+      <!-- Small gear -->
+      <g transform="translate(196 90)">
+        <g>
+          <animateTransform
+            attributeName="transform"
+            type="rotate"
+            from="12.857" to="-347.143"
+            dur="15.555s"
+            repeatCount="indefinite"/>
+
+          <path id="gear-b" fill="#999"/>
+          <circle r="16" fill="#999"
+                  stroke="#444" stroke-width="1.5"/>
+          <circle r="5" fill="#444"/>
+        </g>
+      </g>
+
+    </svg>
+
+  </div>
+</div>
+
+<style>
+  #loading {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    place-items: center;
+
+    /* Semi-transparent blurred background */
+    background: rgb(255 255 255 / 38%);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+
+  #loading.show {
+    display: grid;
+  }
+
+  .loading-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  /* SVG itself has no background */
+  #gears {
+    display: block;
+    width: 300px;
+    max-width: 90vw;
+    height: auto;
+    overflow: visible;
+  }
+</style>
+
+<script>
+(() => {
+  const loading = document.getElementById("loading");
+
+  function createGear(teeth, outerRadius, rootRadius) {
+    const points = [];
+    const pitch = 2 * Math.PI / teeth;
+
+    for (let i = 0; i < teeth; i++) {
+      const a = i * pitch;
+
+      for (const [angle, radius] of [
+        [-0.50, rootRadius],
+        [-0.28, rootRadius],
+        [-0.20, outerRadius],
+        [ 0.20, outerRadius],
+        [ 0.28, rootRadius],
+        [ 0.50, rootRadius]
+      ]) {
+        const theta = a + angle * pitch;
+        points.push(
+          (radius * Math.cos(theta)).toFixed(2) + " " +
+          (radius * Math.sin(theta)).toFixed(2)
+        );
+      }
+    }
+
+    return "M" + points.join(" L") + " Z";
+  }
+
+  // Generate gear teeth
+  document.getElementById("gear-a").setAttribute(
+    "d", createGear(18, 60, 48)
+  );
+
+  document.getElementById("gear-b").setAttribute(
+    "d", createGear(14, 48, 36)
+  );
+
+  function showLoading() {
+    loading.classList.add("show");
+  }
+
+  // Internal navigation
+  document.addEventListener("click", event => {
+    if (!(event.target instanceof Element)) return;
+
+    const link = event.target.closest("a");
+
+    if (!link || event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey || event.ctrlKey ||
+        event.shiftKey || event.altKey ||
+        (link.target && link.target !== "_self") ||
+        link.hasAttribute("download")) return;
+
+    const url = new URL(link.href, location.href);
+
+    if (url.origin === location.origin &&
+        url.href !== location.href) {
+      showLoading();
+    }
+  });
+
+  // Form submissions
+  document.addEventListener("submit", event => {
+    if (!event.defaultPrevented) showLoading();
+  });
+
+  // Back/forward cache
+  window.addEventListener("pageshow", event => {
+    if (event.persisted) {
+      loading.classList.remove("show");
+    }
+  });
+
+})();
+</script>
