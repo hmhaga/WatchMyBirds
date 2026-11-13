@@ -242,7 +242,31 @@ def test_favorites_page_shows_every_favorite_photo_across_species(favorites_fixt
     assert 'id="favorites-select-all"' in body
     assert 'id="favorites-batch-actions" hidden' in body
     assert 'class="form-check-input wm-tile__checkbox"' in body
+    assert (
+        '<select id="favorites-species-filter" name="species" onchange="this.form.submit()">'
+        in body
+    )
+    assert (
+        '<select id="favorites-sort" name="sort" onchange="this.form.submit()">' in body
+    )
+    assert ">Apply</button>" not in body
+    assert 'id="favorites-unfavorite-selected"' in body
     assert "Download Selected (ZIP)" in body
+
+
+def test_authenticated_favorites_page_shows_unfavorite_action(
+    favorites_fixture: tuple[FlaskClient, str, int, int],
+) -> None:
+    client, _today_iso, _favorite_id, _plain_id = favorites_fixture
+    with client.session_transaction() as session:
+        session["authenticated"] = True
+
+    response = client.get("/favorites")
+    body = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert 'id="favorites-unfavorite-selected"' in body
+    assert "window.unfavoriteSelectedFavorites = async function" in body
 
 
 def _anonymous_favorites_csrf_token(client: FlaskClient) -> str:
@@ -250,7 +274,9 @@ def _anonymous_favorites_csrf_token(client: FlaskClient) -> str:
         session.pop("authenticated", None)
     response = client.get("/favorites")
     assert response.status_code == 200
-    assert 'id="favorites-batch-actions" hidden' in response.get_data(as_text=True)
+    body = response.get_data(as_text=True)
+    assert 'id="favorites-batch-actions" hidden' in body
+    assert "Unfavorite Selected" not in body
     with client.session_transaction() as session:
         return str(session["_csrf_token"])
 
@@ -301,6 +327,73 @@ def test_favorites_download_rejects_non_favorites(
 
     assert response.status_code == 400
     build_archive.assert_not_called()
+
+
+def test_authenticated_user_can_unfavorite_selected(
+    favorites_fixture: tuple[FlaskClient, str, int, int],
+) -> None:
+    client, _today_iso, favorite_id, _plain_id = favorites_fixture
+    client.get("/favorites")
+    with client.session_transaction() as session:
+        csrf_token = str(session["_csrf_token"])
+
+    response = client.post(
+        "/api/favorites/unfavorite",
+        json={"detection_ids": [favorite_id]},
+        headers={"X-CSRF-Token": csrf_token},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["unfavorited_ids"] == [favorite_id]
+    with db_connection.closing_connection() as conn:
+        row = conn.execute(
+            "SELECT is_favorite, rating_source FROM detections WHERE detection_id = ?",
+            (favorite_id,),
+        ).fetchone()
+    assert row["is_favorite"] == 0
+    assert row["rating_source"] == "manual"
+    assert f'data-detection-id="{favorite_id}"' not in client.get(
+        "/favorites"
+    ).get_data(as_text=True)
+
+
+def test_unfavorite_rejects_stale_or_nonfavorite_selection(
+    favorites_fixture: tuple[FlaskClient, str, int, int],
+) -> None:
+    client, _today_iso, favorite_id, plain_id = favorites_fixture
+    client.get("/favorites")
+    with client.session_transaction() as session:
+        csrf_token = str(session["_csrf_token"])
+
+    response = client.post(
+        "/api/favorites/unfavorite",
+        json={"detection_ids": [favorite_id, plain_id]},
+        headers={"X-CSRF-Token": csrf_token},
+    )
+
+    assert response.status_code == 409
+    assert f'data-detection-id="{favorite_id}"' in client.get("/favorites").get_data(
+        as_text=True
+    )
+
+
+def test_anonymous_user_cannot_unfavorite(
+    favorites_fixture: tuple[FlaskClient, str, int, int],
+) -> None:
+    client, _today_iso, favorite_id, _plain_id = favorites_fixture
+    csrf_token = _anonymous_favorites_csrf_token(client)
+
+    response = client.post(
+        "/api/favorites/unfavorite",
+        json={"detection_ids": [favorite_id]},
+        headers={"X-CSRF-Token": csrf_token},
+    )
+
+    assert response.status_code == 302
+    assert "/login" in response.headers["Location"]
+    assert f'data-detection-id="{favorite_id}"' in client.get("/favorites").get_data(
+        as_text=True
+    )
 
 
 def test_favorites_page_empty_state(local_db_app):

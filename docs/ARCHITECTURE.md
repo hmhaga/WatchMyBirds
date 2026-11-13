@@ -149,6 +149,10 @@ must not be used as evidence that legacy route logic has been removed.
   verifies submitted ids are current favorites before calling the shared
   `image_download_service.build_download_archive`; authentication is not
   required, and the request remains CSRF-protected.
+- Favorites moderation: authenticated
+  `web.blueprints.gallery.favorites_unfavorite_route` → gallery service/core
+  → SQLite transaction. The update verifies the complete selection is still
+  favorited before clearing any flags.
 - Trash: `web.blueprints.trash.move_to_trash` calls
   `detections_service.move_to_trash` → `core.detections_core.move_to_trash`.
   This changes detection/classification status; it does not move image files

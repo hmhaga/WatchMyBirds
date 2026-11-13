@@ -7,7 +7,7 @@ insert, fetch, reject, restore, and purge functionality.
 
 import sqlite3
 from collections.abc import Iterable
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from utils.cover_selection import cover_order_sql
@@ -1505,6 +1505,43 @@ def fetch_favorite_detection_ids(
         [*detection_ids, UNKNOWN_SPECIES_KEY],
     )
     return sorted(int(row["detection_id"]) for row in rows)
+
+
+def unfavorite_detection_ids(
+    conn: sqlite3.Connection, detection_ids: list[int]
+) -> list[int]:
+    """Clear favorite flags for a current selection of favorite detections."""
+    if not detection_ids:
+        return []
+
+    conn.execute("BEGIN IMMEDIATE")
+    placeholders = ",".join("?" for _ in detection_ids)
+    rows = conn.execute(
+        f"""
+        SELECT detection_id
+        FROM current_observations
+        WHERE detection_id IN ({placeholders})
+          AND COALESCE(is_favorite, 0) != 0
+          AND (species_key != ? OR unknown_bird)
+        """,
+        [*detection_ids, UNKNOWN_SPECIES_KEY],
+    )
+    current_favorites = {int(row["detection_id"]) for row in rows}
+    if current_favorites != set(detection_ids):
+        raise ValueError("Some selected photos are no longer favorites.")
+
+    conn.execute(
+        f"""
+        UPDATE detections
+        SET is_favorite = 0,
+            rating_source = 'manual',
+            species_updated_at = ?
+        WHERE detection_id IN ({placeholders})
+          AND COALESCE(is_favorite, 0) != 0
+        """,
+        [datetime.now(UTC).isoformat(), *detection_ids],
+    )
+    return detection_ids
 
 
 def fetch_favorites_page(

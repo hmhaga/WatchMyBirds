@@ -1060,6 +1060,15 @@ def get_favorite_detection_ids(detection_ids: list[int]) -> list[int]:
         return fetch_favorite_detection_ids(conn, detection_ids)
 
 
+def unfavorite_detection_ids(detection_ids: list[int]) -> list[int]:
+    from utils.db.detections import (
+        unfavorite_detection_ids as db_unfavorite_detection_ids,
+    )
+
+    with closing_connection() as conn:
+        return db_unfavorite_detection_ids(conn, detection_ids)
+
+
 def get_favorites_page(
     *,
     page: int,

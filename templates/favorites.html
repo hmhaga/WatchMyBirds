@@ -15,7 +15,7 @@
     <div class="page-control-bar__center">
         <form method="get" action="/favorites" class="station-filters" aria-label="Filter and sort favorite photos">
             <label for="favorites-species-filter">Species
-                <select id="favorites-species-filter" name="species">
+                <select id="favorites-species-filter" name="species" onchange="this.form.submit()">
                     <option value="all"{% if selected_species == 'all' %} selected{% endif %}>All species</option>
                     {% for option in species_options %}
                     <option value="{{ option.key }}"{% if selected_species == option.key %} selected{% endif %}>{{ option.name }}</option>
@@ -23,12 +23,11 @@
                 </select>
             </label>
             <label for="favorites-sort">Sort by
-                <select id="favorites-sort" name="sort">
+                <select id="favorites-sort" name="sort" onchange="this.form.submit()">
                     <option value="date"{% if sort_by == 'date' %} selected{% endif %}>Date (newest first)</option>
                     <option value="species"{% if sort_by == 'species' %} selected{% endif %}>Species (A–Z)</option>
                 </select>
             </label>
-            <button type="submit" class="btn btn--secondary">Apply</button>
         </form>
     </div>
     <div class="page-control-bar__meta">
@@ -61,6 +60,9 @@
             always_visible=true,
             counter_id='favorites-selected-counter',
             counter_text='0 photos selected',
+            unfavorite_onclick='unfavoriteSelectedFavorites()' if session.get('authenticated') else none,
+            unfavorite_id='favorites-unfavorite-selected',
+            unfavorite_label='Unfavorite Selected',
             download_onclick='downloadSelectedFavorites()',
             download_label='Download Selected (ZIP)'
         ) }}
@@ -206,6 +208,56 @@
             }
         }
     };
+
+    {% if session.get('authenticated') %}
+    window.unfavoriteSelectedFavorites = async function () {
+        const selectedIds = favoritesCheckboxes()
+            .filter(function (checkbox) { return checkbox.checked; })
+            .map(function (checkbox) { return Number(checkbox.value); });
+        if (!selectedIds.length) return;
+
+        const button = document.getElementById('favorites-unfavorite-selected');
+        const restoreLabel = button ? button.textContent : null;
+        if (button) {
+            button.disabled = true;
+            button.textContent = 'Unfavoriting…';
+        }
+
+        try {
+            const response = await fetch('/api/favorites/unfavorite', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ detection_ids: selectedIds })
+            });
+            if (isAuthRedirect(response)) {
+                redirectToLogin();
+                return;
+            }
+
+            const result = await response.json().catch(function () { return {}; });
+            if (!response.ok || result.status !== 'success') {
+                throw new Error(result.message || ('HTTP ' + response.status));
+            }
+
+            const filterForm = document.querySelector('.station-filters');
+            filterForm.querySelector('[name="species"]').value = 'all';
+            filterForm.submit();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (window.wmToast) {
+                window.wmToast('Could not remove favorites: ' + message, 'error', 4000);
+            } else {
+                alert('Could not remove favorites: ' + message);
+            }
+        } finally {
+            if (button) {
+                button.disabled = false;
+                if (restoreLabel) button.textContent = restoreLabel;
+            }
+        }
+    };
+    {% endif %}
 </script>
 {% endif %}
 {% endblock %}

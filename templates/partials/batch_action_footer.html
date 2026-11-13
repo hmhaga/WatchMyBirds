@@ -38,6 +38,10 @@ approve_selected_id=none,
 approve_selected_label='Approve Selected',
 approve_selected_class='btn btn--success',
 approve_selected_title='Approve selected frames per event. One Approve call per distinct event_key.',
+unfavorite_onclick=none,
+unfavorite_id=none,
+unfavorite_label='Unfavorite Selected',
+unfavorite_class='btn btn--secondary',
 download_onclick=none,
 download_label=none,
 download_class='btn btn--success',
@@ -84,6 +88,11 @@ cancel_class='btn btn--secondary'
     <button type="button" class="{{ approve_selected_class }}"{% if approve_selected_id %} id="{{ approve_selected_id }}"{% endif %}
         onclick="{{ approve_selected_onclick }}" title="{{ approve_selected_title }}">✓ {{
         approve_selected_label }}</button>
+    {% endif %}
+
+    {% if unfavorite_onclick %}
+    <button type="button" class="{{ unfavorite_class }}"{% if unfavorite_id %} id="{{ unfavorite_id }}"{% endif %}
+        onclick="{{ unfavorite_onclick }}">☆ {{ unfavorite_label }}</button>
     {% endif %}
 
     {% if download_onclick and download_label %}

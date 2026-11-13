@@ -101,17 +101,9 @@ def daily_species_summary_route():
     return jsonify({"date": date_iso, "summary": summary})
 
 
-def favorites_download_route() -> Response | tuple[Response, int]:
-    """Download selected current favorites without requiring authentication."""
-    data = request.get_json(silent=True)
-    raw_ids = data.get("detection_ids") if isinstance(data, dict) else None
+def _parse_favorites_selection(raw_ids: object) -> list[int]:
     if not isinstance(raw_ids, list) or not raw_ids or len(raw_ids) > PAGE_SIZE:
-        return jsonify(
-            {
-                "status": "error",
-                "message": f"Select between 1 and {PAGE_SIZE} favorite photos.",
-            }
-        ), 400
+        raise ValueError(f"Select between 1 and {PAGE_SIZE} favorite photos.")
 
     detection_ids: list[int] = []
     try:
@@ -123,8 +115,20 @@ def favorites_download_route() -> Response | tuple[Response, int]:
                 raise ValueError
             if detection_id not in detection_ids:
                 detection_ids.append(detection_id)
-    except ValueError:
-        return jsonify({"status": "error", "message": "Invalid detection ids."}), 400
+    except ValueError as exc:
+        raise ValueError("Invalid detection ids.") from exc
+
+    return detection_ids
+
+
+def favorites_download_route() -> Response | tuple[Response, int]:
+    """Download selected current favorites without requiring authentication."""
+    data = request.get_json(silent=True)
+    raw_ids = data.get("detection_ids") if isinstance(data, dict) else None
+    try:
+        detection_ids = _parse_favorites_selection(raw_ids)
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
 
     favorite_ids = gallery_service.get_favorite_detection_ids(detection_ids)
     if len(favorite_ids) != len(detection_ids):
@@ -147,6 +151,31 @@ def favorites_download_route() -> Response | tuple[Response, int]:
         mimetype="application/zip",
         as_attachment=True,
         download_name=f"watchmybirds_favorites_{stamp}.zip",
+    )
+
+
+@login_required
+def favorites_unfavorite_route() -> Response | tuple[Response, int]:
+    """Remove favorites from a selected set of current observations."""
+    data = request.get_json(silent=True)
+    raw_ids = data.get("detection_ids") if isinstance(data, dict) else None
+    try:
+        detection_ids = _parse_favorites_selection(raw_ids)
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+
+    try:
+        unfavorited_ids = gallery_service.unfavorite_detection_ids(detection_ids)
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 409
+
+    gallery_service.invalidate_cache()
+    return jsonify(
+        {
+            "status": "success",
+            "unfavorited_ids": unfavorited_ids,
+            "unfavorited_count": len(unfavorited_ids),
+        }
     )
 
 
@@ -1110,6 +1139,12 @@ gallery_bp.add_url_rule(
     "/api/favorites/download",
     endpoint="favorites_download",
     view_func=favorites_download_route,
+    methods=["POST"],
+)
+gallery_bp.add_url_rule(
+    "/api/favorites/unfavorite",
+    endpoint="favorites_unfavorite",
+    view_func=favorites_unfavorite_route,
     methods=["POST"],
 )
 gallery_bp.add_url_rule(

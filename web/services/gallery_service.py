@@ -213,6 +213,10 @@ def get_favorite_detection_ids(detection_ids: list[int]) -> list[int]:
     return gallery_core.get_favorite_detection_ids(detection_ids)
 
 
+def unfavorite_detection_ids(detection_ids: list[int]) -> list[int]:
+    return gallery_core.unfavorite_detection_ids(detection_ids)
+
+
 def get_favorites_page(
     *,
     page: int,
