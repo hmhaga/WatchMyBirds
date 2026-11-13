@@ -1,45 +1,17 @@
 <div id="loading" role="status" aria-label="Loading">
   <div class="loading-content">
-
-    <svg id="gears" viewBox="0 0 300 180"
-         xmlns="http://www.w3.org/2000/svg">
-
-      <!-- Large gear -->
-      <g transform="translate(100 90)">
-        <g>
-          <animateTransform
-            attributeName="transform"
-            type="rotate"
-            from="0" to="360"
-            dur="20s"
-            repeatCount="indefinite"/>
-
-          <path id="gear-a" fill="#777"/>
-          <circle r="19" fill="#777"
-                  stroke="#444" stroke-width="1.5"/>
-          <circle r="6" fill="#444"/>
-        </g>
-      </g>
-
-      <!-- Small gear -->
-      <g transform="translate(196 90)">
-        <g>
-          <animateTransform
-            attributeName="transform"
-            type="rotate"
-            from="12.857" to="-347.143"
-            dur="15.555s"
-            repeatCount="indefinite"/>
-
-          <path id="gear-b" fill="#999"/>
-          <circle r="16" fill="#999"
-                  stroke="#444" stroke-width="1.5"/>
-          <circle r="5" fill="#444"/>
-        </g>
-      </g>
-
-    </svg>
-
+    <div class="loading-spinner" aria-hidden="true">
+      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="50" cy="14" r="5"/>
+        <circle cx="75.46" cy="24.54" r="5"/>
+        <circle cx="86" cy="50" r="5"/>
+        <circle cx="75.46" cy="75.46" r="5"/>
+        <circle cx="50" cy="86" r="5"/>
+        <circle cx="24.54" cy="75.46" r="5"/>
+        <circle cx="14" cy="50" r="5"/>
+        <circle cx="24.54" cy="24.54" r="5"/>
+      </svg>
+    </div>
   </div>
 </div>
 
@@ -67,54 +39,38 @@
     align-items: center;
   }
 
-  /* SVG itself has no background */
-  #gears {
+  .loading-spinner {
     display: block;
-    width: 300px;
-    max-width: 90vw;
-    height: auto;
-    overflow: visible;
+    width: 64px;
+    height: 64px;
+    color: #0078d4;
+    animation: loading-spin 1s linear infinite;
+  }
+
+  .loading-spinner svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
+  }
+
+  .loading-spinner circle:nth-child(1) { opacity: 1; }
+  .loading-spinner circle:nth-child(2) { opacity: 0.88; }
+  .loading-spinner circle:nth-child(3) { opacity: 0.76; }
+  .loading-spinner circle:nth-child(4) { opacity: 0.64; }
+  .loading-spinner circle:nth-child(5) { opacity: 0.52; }
+  .loading-spinner circle:nth-child(6) { opacity: 0.4; }
+  .loading-spinner circle:nth-child(7) { opacity: 0.28; }
+  .loading-spinner circle:nth-child(8) { opacity: 0.16; }
+
+  @keyframes loading-spin {
+    to { transform: rotate(360deg); }
   }
 </style>
 
 <script>
 (() => {
   const loading = document.getElementById("loading");
-
-  function createGear(teeth, outerRadius, rootRadius) {
-    const points = [];
-    const pitch = 2 * Math.PI / teeth;
-
-    for (let i = 0; i < teeth; i++) {
-      const a = i * pitch;
-
-      for (const [angle, radius] of [
-        [-0.50, rootRadius],
-        [-0.28, rootRadius],
-        [-0.20, outerRadius],
-        [ 0.20, outerRadius],
-        [ 0.28, rootRadius],
-        [ 0.50, rootRadius]
-      ]) {
-        const theta = a + angle * pitch;
-        points.push(
-          (radius * Math.cos(theta)).toFixed(2) + " " +
-          (radius * Math.sin(theta)).toFixed(2)
-        );
-      }
-    }
-
-    return "M" + points.join(" L") + " Z";
-  }
-
-  // Generate gear teeth
-  document.getElementById("gear-a").setAttribute(
-    "d", createGear(18, 60, 48)
-  );
-
-  document.getElementById("gear-b").setAttribute(
-    "d", createGear(14, 48, 36)
-  );
 
   function showLoading() {
     loading.classList.add("show");
