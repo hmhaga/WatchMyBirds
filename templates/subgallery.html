@@ -38,35 +38,9 @@
 {% if page == 1 and species_of_day %}
 <section class="section">
     <h2 class="section__title">Species of the Day</h2>
-    <div class="gallery-grid">
-        {% for det in species_of_day %}
-        <div class="wm-tile fade-in-item" data-detection-id="{{ det.detection_id }}">
-            <div class="wm-tile__media">
-                <button type="button" class="wm-tile__button wm-tile__button--fill" data-bs-toggle="modal"
-                    data-bs-target="#modal-species-{{ det.detection_id }}">
-                    <img class="wm-tile__image" loading="lazy" src="{{ det.display_url }}" alt="{{ det.common_name }}"
-                        data-thumb-src="{{ det.display_url }}" data-full-src="{{ det.full_url }}">
-                </button>
-            </div>
-            {{ tile_toolbox(
-            detection_id=det.detection_id,
-            filename=det.image_filename,
-            surface='gallery',
-            is_favorite=det.is_favorite|default(false),
-            can_moderate=can_moderate,
-            current_species=det.species_key or det.human_species_key or det.cls_class_name or det.od_class_name,
-            modal_target='#modal-species-' ~ det.detection_id
-            ) }}
-
-            <div class="wm-tile__body">
-                <span class="wm-tile__name">{{ det.common_name }}</span>
-                {% if det.species_key %}
-                <span class="wm-tile__latin">{{ det.species_key | replace('_', ' ') }}</span>
-                {% endif %}
-            </div>
-        </div>
-        {% endfor %}
-    </div>
+    {% with gallery_grid_detections=species_of_day, gallery_modal_group='species', show_gallery_capture_time=false %}
+    {% include 'partials/gallery_photo_grid.html' %}
+    {% endwith %}
 </section>
 {% endif %}
 

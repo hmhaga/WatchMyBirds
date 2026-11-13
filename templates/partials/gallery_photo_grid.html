@@ -1,0 +1,37 @@
+{% from 'partials/tile_toolbox.html' import tile_toolbox %}
+{% set can_moderate = session.get('authenticated') %}
+<div class="gallery-grid"{% if gallery_grid_id is defined and gallery_grid_id %} id="{{ gallery_grid_id }}"{% endif %}>
+    {% for det in gallery_grid_detections %}
+    <div class="wm-tile fade-in-item" data-detection-id="{{ det.detection_id }}">
+        <div class="wm-tile__media">
+            <button type="button" class="wm-tile__button wm-tile__button--fill" data-bs-toggle="modal"
+                data-bs-target="#modal-{{ gallery_modal_group }}-{{ det.detection_id }}">
+                {% if det.media_placeholder %}
+                <span class="station-media-placeholder" role="img" aria-label="No stored image available">No stored image available</span>
+                {% else %}
+                <img class="wm-tile__image" loading="lazy" src="{{ det.display_url }}" alt="{{ det.common_name }}"
+                    data-thumb-src="{{ det.display_url }}" data-full-src="{{ det.full_url }}">
+                {% endif %}
+            </button>
+        </div>
+        {{ tile_toolbox(
+        detection_id=det.detection_id,
+        filename=det.image_filename,
+        surface='gallery',
+        is_favorite=det.is_favorite|default(false),
+        can_moderate=can_moderate,
+        current_species=det.species_key or det.human_species_key or det.cls_class_name or det.od_class_name,
+        modal_target='#modal-' ~ gallery_modal_group ~ '-' ~ det.detection_id
+        ) }}
+        <div class="wm-tile__body">
+            <span class="wm-tile__name">{{ det.common_name }}</span>
+            {% if det.species_key and det.species_key != 'Unknown_species' %}
+            <span class="wm-tile__latin">{{ det.species_key | replace('_', ' ') }}</span>
+            {% endif %}
+            {% if show_gallery_capture_time|default(false) and (det.formatted_date or det.formatted_time) %}
+            <span class="wm-tile__meta">{{ det.formatted_date }} {{ det.formatted_time }}</span>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>

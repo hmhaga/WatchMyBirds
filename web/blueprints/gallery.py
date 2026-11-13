@@ -270,7 +270,7 @@ def _station_selection() -> dict[str, str]:
         abort(400, description=str(exc))
 
 
-def _render_species_grid(*, favorites_only: bool, current_path: str) -> str:
+def _render_species_grid() -> str:
     selection = _station_selection()
 
     try:
@@ -285,7 +285,7 @@ def _render_species_grid(*, favorites_only: bool, current_path: str) -> str:
 
     covers = gallery_service.get_species_covers(
         min_score=current_threshold,
-        favorites_only=favorites_only,
+        favorites_only=False,
         selection=selection,
         rotate_favorites=True,
     )
@@ -371,7 +371,7 @@ def _render_species_grid(*, favorites_only: bool, current_path: str) -> str:
     return render_template(
         "species.html",
         selection=selection,
-        current_path=current_path,
+        current_path="/species",
         detections=detections,
         image_width=IMAGE_WIDTH,
         current_threshold=current_threshold,
@@ -380,16 +380,126 @@ def _render_species_grid(*, favorites_only: bool, current_path: str) -> str:
             and det.get("observation_count", 0) > 0
             for det in detections
         ),
-        favorites_only=favorites_only,
     )
 
 
 def species_route() -> str:
-    return _render_species_grid(favorites_only=False, current_path="/species")
+    return _render_species_grid()
 
 
 def favorites_route() -> str:
-    return _render_species_grid(favorites_only=True, current_path="/favorites")
+    species_options = [
+        {"key": key, "name": view_helpers.get_common_name(key)}
+        for key in gallery_service.get_favorite_species()
+    ]
+    species_options.sort(key=lambda option: (option["name"].casefold(), option["key"]))
+    species_order = [option["key"] for option in species_options]
+    selected_species = request.args.get("species", "all")
+    if selected_species != "all" and selected_species not in species_order:
+        abort(400, description="Unknown favorite species.")
+
+    sort_by = request.args.get("sort", "date")
+    if sort_by not in {"date", "species"}:
+        abort(400, description="Invalid favorites sort.")
+
+    page_detections, total_items, page = gallery_service.get_favorites_page(
+        page=request.args.get("page", 1, type=int),
+        per_page=PAGE_SIZE,
+        species_key=None if selected_species == "all" else selected_species,
+        sort_by=sort_by,
+        species_order=species_order,
+    )
+    total_pages = math.ceil(total_items / PAGE_SIZE) or 1
+    modal_siblings = gallery_service.get_sibling_detections_batch(
+        sorted(
+            {
+                str(det.get("original_name") or det.get("image_filename") or "")
+                for det in page_detections
+            }
+            - {""}
+        )
+    )
+
+    detections = []
+    for det in page_detections:
+        species_key = view_helpers.get_species_key(det)
+        full_path = det.get("relative_path") or det.get("optimized_name_virtual", "")
+        thumb_virtual = det.get("thumbnail_path_virtual")
+        display_url = (
+            f"/uploads/derivatives/thumbs/{thumb_virtual}"
+            if thumb_virtual
+            else f"/uploads/derivatives/optimized/{full_path}"
+        )
+        full_url = f"/uploads/derivatives/optimized/{full_path}"
+        original_url = f"/uploads/originals/{full_path.replace('.webp', '.jpg')}"
+
+        ts = str(det.get("image_timestamp") or "")
+        if len(ts) >= 15:
+            date_str = ts[:8]
+            time_str = ts[9:15]
+            formatted_date = f"{date_str[6:8]}.{date_str[4:6]}.{date_str[0:4]}"
+            formatted_time = f"{time_str[0:2]}:{time_str[2:4]}:{time_str[4:6]}"
+            gallery_date = f"{date_str[0:4]}-{date_str[4:6]}-{date_str[6:8]}"
+        else:
+            formatted_date = ""
+            formatted_time = ""
+            gallery_date = ""
+
+        original_name = str(det.get("original_name") or det.get("image_filename") or "")
+        siblings = []
+        for sibling in modal_siblings.get(original_name, []):
+            sibling_species = view_helpers.get_species_key(sibling)
+            sibling_thumb = sibling.get("thumbnail_path_virtual")
+            siblings.append(
+                view_helpers.build_detection_view_dict(
+                    sibling,
+                    species_key=sibling_species,
+                    common_name=view_helpers.get_common_name(sibling_species),
+                    include_decision_state=True,
+                    extra={
+                        "thumb_url": (
+                            f"/uploads/derivatives/thumbs/{sibling_thumb}"
+                            if sibling_thumb
+                            else ""
+                        )
+                    },
+                )
+            )
+
+        detections.append(
+            view_helpers.build_detection_view_dict(
+                det,
+                species_key=species_key,
+                common_name=view_helpers.get_common_name(species_key),
+                formatted_date=formatted_date,
+                formatted_time=formatted_time,
+                gallery_date=gallery_date,
+                siblings=siblings,
+                sibling_count=det.get("sibling_count", 1) or 1,
+                include_decision_state=True,
+                extra={
+                    "display_url": display_url,
+                    "full_url": full_url,
+                    "display_path": display_url,
+                    "full_path": full_url,
+                    "original_path": original_url,
+                    **station_service.media_paths(det),
+                },
+            )
+        )
+
+    view_helpers.enrich_modal_review_states(detections)
+    return render_template(
+        "favorites.html",
+        current_path="/favorites",
+        detections=detections,
+        page=page,
+        total_pages=total_pages,
+        total_items=total_items,
+        species_options=species_options,
+        selected_species=selected_species,
+        sort_by=sort_by,
+    )
 
 
 def species_overview_route():

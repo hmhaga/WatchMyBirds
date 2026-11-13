@@ -1472,6 +1472,82 @@ def fetch_observation_page(
     return hydrate_observations(conn, rows), total, page
 
 
+def fetch_favorite_species(conn: sqlite3.Connection) -> list[str]:
+    """Return species keys represented by current favorite observations."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT species_key
+        FROM current_observations
+        WHERE COALESCE(is_favorite, 0) != 0
+          AND (species_key != ? OR unknown_bird)
+        """,
+        (UNKNOWN_SPECIES_KEY,),
+    )
+    return [str(row["species_key"]) for row in rows if row["species_key"]]
+
+
+def fetch_favorites_page(
+    conn: sqlite3.Connection,
+    *,
+    page: int = 1,
+    per_page: int = 50,
+    species_key: str | None = None,
+    sort_by: str = "date",
+    species_order: list[str] | None = None,
+) -> tuple[list[dict], int, int]:
+    """Return a filtered and paginated list of favorited observations."""
+    if sort_by not in {"date", "species"}:
+        raise ValueError("invalid favorites sort")
+
+    where = "COALESCE(is_favorite, 0) != 0 AND (species_key != ? OR unknown_bird)"
+    params: list[Any] = [UNKNOWN_SPECIES_KEY]
+    if species_key is not None:
+        where += " AND species_key = ?"
+        params.append(species_key)
+    total = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM current_observations WHERE " + where,
+            params,
+        ).fetchone()[0]
+    )
+    per_page = max(1, min(int(per_page), 100))
+    page = max(1, min(page, max(1, (total + per_page - 1) // per_page)))
+    order_params: list[str] = []
+    if sort_by == "species":
+        species_order = species_order or []
+        if species_order:
+            species_order_sql = " ".join(
+                f"WHEN ? THEN {index}" for index, _ in enumerate(species_order)
+            )
+            order_sql = (
+                f"CASE species_key {species_order_sql} ELSE {len(species_order)} END, "
+                "timestamp DESC, COALESCE(detection_id, -manual_object_id) DESC, "
+                "object_key"
+            )
+            order_params = species_order
+        else:
+            order_sql = (
+                "timestamp DESC, COALESCE(detection_id, -manual_object_id) DESC, "
+                "object_key"
+            )
+    else:
+        order_sql = (
+            "timestamp DESC, COALESCE(detection_id, -manual_object_id) DESC, object_key"
+        )
+    rows = [
+        dict(row)
+        for row in conn.execute(
+            "SELECT * FROM current_observations WHERE "
+            + where
+            + " ORDER BY "
+            + order_sql
+            + " LIMIT ? OFFSET ?",
+            [*params, *order_params, per_page, (page - 1) * per_page],
+        )
+    ]
+    return hydrate_observations(conn, rows), total, page
+
+
 def fetch_species_page(
     conn: sqlite3.Connection,
     species: str,

@@ -80,7 +80,7 @@ Each timing reports its own count, average, minimum and maximum; skipped crops
 are not classifier samples. These summaries are not uploaded as telemetry.
 
 ### `utils/cover_selection.py`
-*   **MUST:** Be the single photo-quality order for every cover, gallery, report and notification pick. Surfaces may restrict candidates and add a tie-breaker, never reorder criteria. The one exception is `rotate_favorites`: the Species and Favorites pages and gallery day covers draw a random favorite on each load; every other surface keeps the order deterministic.
+*   **MUST:** Be the single photo-quality order for every cover, gallery, report and notification pick. Surfaces may restrict candidates and add a tie-breaker, never reorder criteria. The `rotate_favorites` exception applies to Species covers and gallery day covers; `/favorites` lists each favorite photo by capture time and does not select covers.
 *   **NOTE:** The order, its inputs and every surface are documented in [COVER_SELECTION.md](COVER_SELECTION.md); update it with any change to `_CRITERIA` or a cover query.
 
 ### `utils/file_gc.py`
@@ -142,6 +142,9 @@ must not be used as evidence that legacy route logic has been removed.
 
 - Gallery data: `web.services.gallery_service.get_detections_for_date` →
   `core.gallery_core.get_detections_for_date` → SQLite queries.
+- Favorites: `web.blueprints.gallery.favorites_route` →
+  `web.services.gallery_service.get_favorites_page` →
+  `core.gallery_core.get_favorites_page` → SQLite queries.
 - Trash: `web.blueprints.trash.move_to_trash` calls
   `detections_service.move_to_trash` → `core.detections_core.move_to_trash`.
   This changes detection/classification status; it does not move image files
