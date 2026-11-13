@@ -1498,13 +1498,15 @@ def fetch_species_covers(
     summaries = {row["species_key"]: row for row in species_summaries(conn, selection)}
     order = cover_order_sql(rotate_favorites=rotate_favorites)
     where, params = selection_sql(selection)
+    favorite_filter = " AND COALESCE(is_favorite, 0) != 0" if favorites_only else ""
     rows = [
         dict(row)
         for row in conn.execute(
             f"""
         WITH selected AS (
             SELECT *, ({where}) AS in_period FROM current_observations
-            WHERE species_key != 'Unknown_species' OR unknown_bird
+            WHERE (species_key != 'Unknown_species' OR unknown_bird)
+            {favorite_filter}
         ), candidates AS (
             SELECT *, MAX(in_period) OVER (PARTITION BY species_key) AS has_period
             FROM selected
@@ -1522,8 +1524,14 @@ def fetch_species_covers(
             row.update(summaries[row["species_key"]])
             result.append(row)
         elif row["species_key"] == UNKNOWN_SPECIES_KEY:
-            _, total, _ = fetch_observation_page(
-                conn, species=UNKNOWN_SPECIES_KEY, selection=selection, per_page=1
+            unknown_where = where + " AND unknown_bird"
+            if favorites_only:
+                unknown_where += " AND COALESCE(is_favorite, 0) != 0"
+            total = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM current_observations WHERE " + unknown_where,
+                    params,
+                ).fetchone()[0]
             )
             if total:
                 row["observation_count"] = total

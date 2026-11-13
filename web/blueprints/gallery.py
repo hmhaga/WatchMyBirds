@@ -270,7 +270,7 @@ def _station_selection() -> dict[str, str]:
         abort(400, description=str(exc))
 
 
-def species_route():
+def _render_species_grid(*, favorites_only: bool, current_path: str) -> str:
     selection = _station_selection()
 
     try:
@@ -283,7 +283,6 @@ def species_route():
     else:
         current_threshold = config["GALLERY_DISPLAY_THRESHOLD"]
 
-    favorites_only = False
     covers = gallery_service.get_species_covers(
         min_score=current_threshold,
         favorites_only=favorites_only,
@@ -372,7 +371,7 @@ def species_route():
     return render_template(
         "species.html",
         selection=selection,
-        current_path="/species",
+        current_path=current_path,
         detections=detections,
         image_width=IMAGE_WIDTH,
         current_threshold=current_threshold,
@@ -383,6 +382,14 @@ def species_route():
         ),
         favorites_only=favorites_only,
     )
+
+
+def species_route() -> str:
+    return _render_species_grid(favorites_only=False, current_path="/species")
+
+
+def favorites_route() -> str:
+    return _render_species_grid(favorites_only=True, current_path="/favorites")
 
 
 def species_overview_route():
@@ -922,6 +929,12 @@ gallery_bp.add_url_rule(
     "/species",
     endpoint="species",
     view_func=species_route,
+    methods=["GET"],
+)
+gallery_bp.add_url_rule(
+    "/favorites",
+    endpoint="favorites",
+    view_func=favorites_route,
     methods=["GET"],
 )
 gallery_bp.add_url_rule(

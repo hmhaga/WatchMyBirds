@@ -59,6 +59,7 @@ Only the restriction and the tie-breaker after the shared order differ.
 | Surface | Candidates | After the shared order | Code |
 |---------|-----------|------------------------|------|
 | Species page (`/species`) | Current observations of each species, including Unknown bird. If a date range is set and the species has observations in it, only those; otherwise all of them | Rotates among favorites (`rotate_favorites=True`), then `object_key` ascending | `fetch_species_covers` in `utils/db/detections.py` |
+| Favorites page (`/favorites`) | Current favorite observations of each species, including Unknown bird. If a date range is set and the species has favorites in it, only those; otherwise all of its favorites | Rotates among favorite covers (`rotate_favorites=True`), then `object_key` ascending | `fetch_species_covers(favorites_only=True)` in `utils/db/detections.py` |
 | Station report highlights | Covers from the species query without rotation for the report period, sorted again by the shared order; the first six are shown | — | `core/automatic_station_report.py` |
 | Gallery day covers (`/gallery`) | Current observations of each day, excluding Unknown species | Rotates among favorites (`rotate_favorites=True`), then `detection_id` descending, then `object_key` | `fetch_daily_covers` via `fetch_gallery_days` in `utils/db/detections.py` |
 | Daily report / Telegram summary | Admitted observations of that day, per species | `object_key` ascending | `utils/daily_report.py` |
@@ -78,11 +79,12 @@ already exist; for fresh detections those are still empty.
 
 ## Rotation
 
-The species page and gallery day covers rotate among favorites. With
+The Species and Favorites pages rotate among favorite covers; gallery day
+covers rotate among that day's favorites. With
 `cover_order_sql(rotate_favorites=True)`, a `RANDOM()` term follows the
-favorite criterion, so every page load draws one of the species' or day's
-favorites. Photos without a star keep criteria 2–8, so a species or day
-without favorites shows the same photo on every load.
+favorite criterion, so each page load chooses one favorite per species or day.
+Photos without a star keep criteria 2–8, so a species or day without favorites
+shows the same photo on every load.
 
 All other covers do not rotate. Reports, event covers, the Live page species
 summary and notifications always return the same photo for the same data.
@@ -92,8 +94,9 @@ and between photos whose complete ranking tuple is identical.
 
 ## Known gaps
 
-- `fetch_species_covers` accepts `min_score` and `favorites_only` but does not
-  use them.
+- `fetch_species_covers` accepts `min_score` but does not use it.
+- `fetch_species_page` accepts `min_score` and `favorites_only` but does not use
+  them.
 - No timestamp is stored when a favorite is set.
 - AI picks are never withdrawn automatically, so old AI picks keep their
   advantage over newer photos indefinitely.

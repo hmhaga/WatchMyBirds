@@ -1,6 +1,8 @@
 {% extends 'base.html' %}
 
-{% block title %}Species Summary - WatchMyBirds{% endblock %}
+{% set page_title = 'Favorites' if favorites_only else 'Species Summary' %}
+
+{% block title %}{{ page_title }} - WatchMyBirds{% endblock %}
 
 {% block head %}
 {# Styles migrated to design-system.css: SPECIES GRID section #}
@@ -11,9 +13,9 @@
 {% set can_moderate = session.get('authenticated') %}
 {% set favorites_query = '&favorites=1' if favorites_only else '' %}
 {# Page Control Bar - Unified Design #}
-<nav class="page-control-bar" role="navigation" aria-label="Species Summary controls">
+<nav class="page-control-bar" role="navigation" aria-label="{{ page_title }} controls">
     <div class="page-control-bar__left">
-        <span class="page-control-bar__title">Species Summary</span>
+        <span class="page-control-bar__title">{{ page_title }}</span>
     </div>
     <div class="page-control-bar__center">
         {% include 'partials/station_filters.html' %}
@@ -23,12 +25,23 @@
     </div>
     <div class="page-control-bar__right">
         {% include 'partials/thumb_view_toggle.html' %}
-        <a href="/gallery" class="btn btn--secondary">← Gallery</a>
+        <a href="{{ '/species' if favorites_only else '/gallery' }}" class="btn btn--secondary">
+            ← {{ 'Species' if favorites_only else 'Gallery' }}
+        </a>
     </div>
 </nav>
 
+{% if favorites_only %}
+<p class="station-intro">One favorited photo per species. Other observations remain available in each species overview.</p>
+{% else %}
 <p class="station-intro">Species from human identifications and sufficiently supported automatic observations. Uncertain proposals remain in Review.</p>
-<a class="station-unknown" href="/species/overview?species_key=Unknown_species&{{ selection | urlencode }}" title="Open birds with an unknown species">Bird · species unknown · {% set unknown = detections | selectattr('species_key', 'equalto', 'Unknown_species') | list %}{{ unknown[0].observation_count if unknown else 0 }} records{% if not unknown %} · No records in this selection{% endif %}</a>
+{% endif %}
+{% set unknown = detections | selectattr('species_key', 'equalto', 'Unknown_species') | list %}
+<a class="station-unknown" href="/species/overview?species_key=Unknown_species&{{ selection | urlencode }}" title="Open birds with an unknown species">
+    Bird · species unknown · {{ unknown[0].observation_count if unknown else 0 }}
+    {{ 'favorites' if favorites_only else 'records' }}
+    {% if not unknown %} · {{ 'No favorites in this selection' if favorites_only else 'No records in this selection' }}{% endif %}
+</a>
 {% if detections %}
 <div class="species-grid" id="species-gallery-grid">
     {% for det in detections if det.species_key != 'Unknown_species' %}
@@ -57,7 +70,7 @@
         can_moderate=can_moderate,
         current_species=det.species_key or det.human_species_key or det.cls_class_name or det.od_class_name,
         modal_target='#modal-species_summary-' ~ det.detection_id,
-        details_href=('/gallery/' ~ det.gallery_date ~ '?focus=' ~ det.detection_id ~ '#detection-' ~ det.detection_id) if det.gallery_date else none
+        details_href=('/gallery/' ~ det.gallery_date ~ '?focus=' ~ det.detection_id ~ favorites_query ~ '#detection-' ~ det.detection_id) if det.gallery_date else none
         ) }}
 
         <a class="wm-tile__body wm-tile__body--link"
@@ -79,7 +92,7 @@
 {% else %}
 <div class="empty-state">
     <div class="empty-state__icon">🐦</div>
-    <p>No observations found matching the filter.</p>
+    <p>{{ 'No favorited species found.' if favorites_only else 'No observations found matching the filter.' }}</p>
 </div>
 {% endif %}
 {% endblock %}

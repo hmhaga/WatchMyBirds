@@ -205,6 +205,49 @@ def test_species_grid_no_param_shows_all(favorites_fixture):
     assert "species_key=Pica_pica" in body
 
 
+def test_favorites_page_shows_only_species_with_favorite_covers(favorites_fixture):
+    client, _today, fav_id, plain_id = favorites_fixture
+
+    resp = client.get("/favorites")
+
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "<title>Favorites - WatchMyBirds</title>" in body
+    assert f'data-detection-id="{fav_id}"' in body
+    assert f'data-detection-id="{plain_id}"' not in body
+    assert 'href="/favorites"' in body
+
+
+def test_favorites_page_never_uses_nonfavorite_cover_for_species(local_db_app):
+    today_iso = datetime.now().strftime("%Y-%m-%d")
+    p = today_iso.replace("-", "")
+    with db_connection.closing_connection() as conn:
+        fav_id = _seed_detection(
+            conn,
+            filename=f"{p}_130000_fav.jpg",
+            timestamp=f"{p}_130000",
+            species="Parus_major",
+            score=0.90,
+            is_favorite=1,
+        )
+        plain_id = _seed_detection(
+            conn,
+            filename=f"{p}_131000_plain.jpg",
+            timestamp=f"{p}_131000",
+            species="Parus_major",
+            score=0.99,
+            is_favorite=0,
+        )
+
+    with local_db_app.test_client() as client:
+        response = client.get("/favorites")
+
+    body = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert f'data-detection-id="{fav_id}"' in body
+    assert f'data-detection-id="{plain_id}"' not in body
+
+
 def test_subgallery_favorites_only_keeps_only_favorite_observations(favorites_fixture):
     client, today_iso, fav_id, plain_id = favorites_fixture
 
