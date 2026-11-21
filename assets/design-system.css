@@ -2341,6 +2341,10 @@ code {
     z-index: 2;
 }
 
+.stream-embed__night-pause {
+    object-fit: contain;
+}
+
 .stream-embed__loading-static.is-hidden {
     opacity: 0;
     pointer-events: none;

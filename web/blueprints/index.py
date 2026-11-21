@@ -426,6 +426,11 @@ def index_route(*, archive_only: bool = False) -> str | tuple[str, int]:
             "today_species_count": len(species_visit_counts),
         }
     )
+    od_status = (
+        _detection_manager.get_od_status()
+        if not archive_only and _detection_manager is not None
+        else {}
+    )
 
     return render_template(
         "partials/homepage_archive.html" if archive_only else "stream.html",
@@ -441,6 +446,7 @@ def index_route(*, archive_only: bool = False) -> str | tuple[str, int]:
         best_species_board=best_species_board,
         best_species_preview=best_species_preview,
         best_species_modal_dets=best_species_modal_dets,
+        night_pause_active=od_status.get("reason") == "night-paused",
     )
 
 

@@ -27,7 +27,11 @@
             </div>
             {% else %}
             <canvas id="stream-loading-static" class="stream-embed__loading-static" aria-label="Loading live stream"></canvas>
-            <div id="stream-loading-status" class="stream-embed__loading-status" role="status" aria-live="polite">Establishing Connection<span aria-hidden="true"></span></div>
+            {% if night_pause_active %}
+            <img id="stream-loading-night" class="stream-embed__loading-static stream-embed__night-pause is-hidden"
+                 src="/assets/images/nrk.png?v={{ asset_version }}" alt="Night pause active">
+            {% endif %}
+            <div id="stream-loading-status" class="stream-embed__loading-status" role="status" aria-live="polite">{% if night_pause_active %}Night pause active{% else %}Establishing Connection{% endif %}<span aria-hidden="true"></span></div>
             <iframe id="go2rtc-frame" class="stream-embed__frame" src="" allow="autoplay; fullscreen">
             </iframe>
             <img id="video-feed-fallback" class="stream-video stream-embed__fallback" alt="Live Stream" data-fallback-src="/video_feed">
@@ -94,6 +98,7 @@
                 const iframe = document.getElementById('go2rtc-frame');
                 const fallback = document.getElementById('video-feed-fallback');
                 const loadingStatic = document.getElementById('stream-loading-static');
+                const nightPauseImage = document.getElementById('stream-loading-night');
                 const loadingStatus = document.getElementById('stream-loading-status');
                 if (!iframe || !fallback) return;
 
@@ -122,13 +127,18 @@
                 }
 
                 function showLoading() {
-                    if (loadingStatic) loadingStatic.classList.remove('is-hidden');
+                    if (nightPauseImage) {
+                        if (loadingStatic) loadingStatic.classList.add('is-hidden');
+                        nightPauseImage.classList.remove('is-hidden');
+                    } else if (loadingStatic) {
+                        loadingStatic.classList.remove('is-hidden');
+                    }
                     if (loadingStatus) loadingStatus.classList.remove('is-hidden');
-                    if (noiseTimer === null) {
+                    if (!nightPauseImage && noiseTimer === null) {
                         drawNoise();
                         noiseTimer = window.setInterval(drawNoise, 100);
                     }
-                    if (ellipsisTimer === null && loadingStatus) {
+                    if (ellipsisTimer === null && loadingStatus && !nightPauseImage) {
                         let dots = 0;
                         ellipsisTimer = window.setInterval(function () {
                             loadingStatus.lastElementChild.textContent = '.'.repeat(dots);
@@ -139,6 +149,7 @@
 
                 function hideLoading() {
                     if (loadingStatic) loadingStatic.classList.add('is-hidden');
+                    if (nightPauseImage) nightPauseImage.classList.add('is-hidden');
                     if (loadingStatus) loadingStatus.classList.add('is-hidden');
                     if (noiseTimer !== null) {
                         window.clearInterval(noiseTimer);
