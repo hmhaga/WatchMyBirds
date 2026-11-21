@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import errno
-import fcntl
+import os
+
+if os.name == 'nt':
+    import winfcntl as fcntl
+else:
+    import fcntl
+
 import json
 import logging
 import os

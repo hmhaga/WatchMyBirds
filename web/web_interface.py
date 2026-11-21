@@ -11,6 +11,7 @@ from flask import (
     Response,
     g,
     request,
+    send_from_directory,
     session,
 )
 from flask_compress import Compress
@@ -160,6 +161,12 @@ def create_web_interface(detection_manager, system_monitor=None):
     template_folder = os.path.join(project_root, "templates")
     server = Flask(__name__, template_folder=template_folder)
     server.extensions["homepage_archive_lock"] = Lock()
+
+    @server.route("/favicon.ico")
+    def favicon():
+        return send_from_directory(
+            project_root, "favicon.ico", mimetype="image/vnd.microsoft.icon"
+        )
 
     Compress(server)
     server.config["COMPRESS_MIMETYPES"] = ["text/html", "application/json"]

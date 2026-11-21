@@ -173,3 +173,12 @@ def test_login_page_shows_footer_version_when_logged_out(logged_out_app):
     assert "2026-06-04" in html
     # GitHub link points at the commit, not the bare repo.
     assert "/commit/deadbee" in html
+
+
+def test_favicon_is_served_from_project_root(logged_out_app):
+    with logged_out_app.test_client() as client:
+        response = client.get("/favicon.ico")
+
+    assert response.status_code == 200
+    assert response.mimetype == "image/vnd.microsoft.icon"
+    assert response.data.startswith(b"\x00\x00\x01\x00")
