@@ -243,7 +243,7 @@ def test_index_renders_stream_template_with_expected_context_keys(seeded_client)
     ("reason", "expected_active"),
     [("night-paused", True), ("daytime", False), ("master-switch-on", False)],
 )
-def test_stream_shows_night_pause_image_only_when_od_is_paused(
+def test_stream_uses_nrk_loading_image_and_pause_status(
     seeded_client: tuple[FlaskClient, str],
     monkeypatch: pytest.MonkeyPatch,
     reason: str,
@@ -261,8 +261,10 @@ def test_stream_shows_night_pause_image_only_when_od_is_paused(
     response = client.get("/")
     assert response.status_code == 200
     html = response.get_data(as_text=True)
-    assert ('id="stream-loading-night"' in html) is expected_active
-    assert ('/assets/images/nrk.png?' in html) is expected_active
+    assert 'id="stream-loading-image"' in html
+    assert '/assets/images/nrk.png?' in html
+    assert 'id="stream-loading-static"' not in html
+    assert "function drawNoise()" not in html
     expected_status = (
         "Night pause active" if expected_active else "Establishing Connection"
     )

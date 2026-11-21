@@ -26,11 +26,8 @@
                 <span>Browse your copied bird visits below. The Pi keeps recording independently.</span>
             </div>
             {% else %}
-            <canvas id="stream-loading-static" class="stream-embed__loading-static" aria-label="Loading live stream"></canvas>
-            {% if night_pause_active %}
-            <img id="stream-loading-night" class="stream-embed__loading-static stream-embed__night-pause is-hidden"
-                 src="/assets/images/nrk.png?v={{ asset_version }}" alt="Night pause active">
-            {% endif %}
+            <img id="stream-loading-image" class="stream-embed__loading-image is-hidden"
+                 src="/assets/images/nrk.png?v={{ asset_version }}" alt="Stream paused or connecting">
             <div id="stream-loading-status" class="stream-embed__loading-status" role="status" aria-live="polite">{% if night_pause_active %}Night pause active{% else %}Establishing Connection{% endif %}<span aria-hidden="true"></span></div>
             <iframe id="go2rtc-frame" class="stream-embed__frame" src="" allow="autoplay; fullscreen">
             </iframe>
@@ -97,48 +94,17 @@
             (function () {
                 const iframe = document.getElementById('go2rtc-frame');
                 const fallback = document.getElementById('video-feed-fallback');
-                const loadingStatic = document.getElementById('stream-loading-static');
-                const nightPauseImage = document.getElementById('stream-loading-night');
+                const loadingImage = document.getElementById('stream-loading-image');
                 const loadingStatus = document.getElementById('stream-loading-status');
+                const nightPauseActive = {{ 'true' if night_pause_active else 'false' }};
                 if (!iframe || !fallback) return;
 
-                let noiseTimer = null;
                 let ellipsisTimer = null;
 
-                function drawNoise() {
-                    if (!loadingStatic) return;
-                    const context = loadingStatic.getContext('2d');
-                    if (!context) return;
-                    const width = 160;
-                    const height = 90;
-                    if (loadingStatic.width !== width || loadingStatic.height !== height) {
-                        loadingStatic.width = width;
-                        loadingStatic.height = height;
-                    }
-                    const image = context.createImageData(width, height);
-                    for (let index = 0; index < image.data.length; index += 4) {
-                        const value = Math.floor(Math.random() * 256);
-                        image.data[index] = value;
-                        image.data[index + 1] = value;
-                        image.data[index + 2] = value;
-                        image.data[index + 3] = 255;
-                    }
-                    context.putImageData(image, 0, 0);
-                }
-
                 function showLoading() {
-                    if (nightPauseImage) {
-                        if (loadingStatic) loadingStatic.classList.add('is-hidden');
-                        nightPauseImage.classList.remove('is-hidden');
-                    } else if (loadingStatic) {
-                        loadingStatic.classList.remove('is-hidden');
-                    }
+                    loadingImage.classList.remove('is-hidden');
                     if (loadingStatus) loadingStatus.classList.remove('is-hidden');
-                    if (!nightPauseImage && noiseTimer === null) {
-                        drawNoise();
-                        noiseTimer = window.setInterval(drawNoise, 100);
-                    }
-                    if (ellipsisTimer === null && loadingStatus && !nightPauseImage) {
+                    if (ellipsisTimer === null && loadingStatus && !nightPauseActive) {
                         let dots = 0;
                         ellipsisTimer = window.setInterval(function () {
                             loadingStatus.lastElementChild.textContent = '.'.repeat(dots);
@@ -148,13 +114,9 @@
                 }
 
                 function hideLoading() {
-                    if (loadingStatic) loadingStatic.classList.add('is-hidden');
-                    if (nightPauseImage) nightPauseImage.classList.add('is-hidden');
+                    if (nightPauseActive) return;
+                    loadingImage.classList.add('is-hidden');
                     if (loadingStatus) loadingStatus.classList.add('is-hidden');
-                    if (noiseTimer !== null) {
-                        window.clearInterval(noiseTimer);
-                        noiseTimer = null;
-                    }
                     if (ellipsisTimer !== null) {
                         window.clearInterval(ellipsisTimer);
                         ellipsisTimer = null;

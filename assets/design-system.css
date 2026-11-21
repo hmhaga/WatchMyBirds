@@ -2330,7 +2330,7 @@ code {
     z-index: 1;
 }
 
-.stream-embed__loading-static {
+.stream-embed__loading-image {
     position: absolute;
     inset: 0;
     width: 100%;
@@ -2339,13 +2339,10 @@ code {
     opacity: 1;
     transition: opacity 240ms ease;
     z-index: 2;
-}
-
-.stream-embed__night-pause {
     object-fit: contain;
 }
 
-.stream-embed__loading-static.is-hidden {
+.stream-embed__loading-image.is-hidden {
     opacity: 0;
     pointer-events: none;
 }
