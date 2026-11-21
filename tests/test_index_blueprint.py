@@ -265,10 +265,9 @@ def test_stream_uses_nrk_loading_image_and_pause_status(
     assert '/assets/images/nrk.png?' in html
     assert 'id="stream-loading-static"' not in html
     assert "function drawNoise()" not in html
-    expected_status = (
-        "Night pause active" if expected_active else "Establishing Connection"
-    )
-    assert expected_status in html
+    assert "Establishing Connection" not in html
+    if expected_active:
+        assert "Night pause active" in html
 
 
 def test_index_context_collection_shapes(seeded_client):
