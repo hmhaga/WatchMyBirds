@@ -28,7 +28,7 @@
             {% else %}
             <img id="stream-loading-image" class="stream-embed__loading-image is-hidden"
                  src="/assets/images/nrk.png?v={{ asset_version }}" alt="Stream paused or connecting">
-            <div id="stream-loading-status" class="stream-embed__loading-status" role="status" aria-live="polite">{% if night_pause_active %}Night pause active{% endif %}<span aria-hidden="true"></span></div>
+            <div id="stream-loading-status" class="stream-embed__loading-status" role="status" aria-live="polite">{% if night_pause_active %}Night pause active{% else %}Establishing Connection{% endif %}<span aria-hidden="true"></span></div>
             <iframe id="go2rtc-frame" class="stream-embed__frame" src="" allow="autoplay; fullscreen">
             </iframe>
             <img id="video-feed-fallback" class="stream-video stream-embed__fallback" alt="Live Stream" data-fallback-src="/video_feed">
