@@ -171,7 +171,6 @@ _EXPECTED_CONTEXT_KEYS = {
     "best_species_board",
     "best_species_preview",
     "best_species_modal_dets",
-    "night_pause_active",
 }
 
 
@@ -237,36 +236,6 @@ def test_index_renders_stream_template_with_expected_context_keys(seeded_client)
     assert context["current_path"] == "/"
     assert context["today_iso"] == today_iso
     assert context["image_width"] == 150
-
-
-@pytest.mark.parametrize(
-    ("reason", "expected_active"),
-    [("night-paused", True), ("daytime", False), ("master-switch-on", False)],
-)
-def test_stream_shows_night_pause_image_only_when_od_is_paused(
-    seeded_client: tuple[FlaskClient, str],
-    monkeypatch: pytest.MonkeyPatch,
-    reason: str,
-    expected_active: bool,
-) -> None:
-    client, _ = seeded_client
-    from web.blueprints import index
-
-    monkeypatch.setattr(
-        index._detection_manager,
-        "get_od_status",
-        lambda: {"reason": reason},
-    )
-
-    response = client.get("/")
-    assert response.status_code == 200
-    html = response.get_data(as_text=True)
-    assert ('id="stream-loading-night"' in html) is expected_active
-    assert ('/assets/images/nrk.png?' in html) is expected_active
-    expected_status = (
-        "Night pause active" if expected_active else "Establishing Connection"
-    )
-    assert expected_status in html
 
 
 def test_index_context_collection_shapes(seeded_client):
