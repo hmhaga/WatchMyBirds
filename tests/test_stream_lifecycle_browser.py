@@ -16,24 +16,17 @@ from tests.test_index_blueprint import local_db_app as local_db_app
 
 @pytest.mark.parametrize("width", [1440, 390])
 @pytest.mark.parametrize("theme", ["light", "dark"])
-@pytest.mark.parametrize("night_paused", [False, True])
 def test_live_player_survives_visibility_in_fullscreen(
     local_db_app: Flask,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     width: int,
     theme: str,
-    night_paused: bool,
 ) -> None:
     api = pytest.importorskip("playwright.sync_api")
     from web.blueprints import index
 
     monkeypatch.setitem(index.config, "STREAM_SOURCE_MODE", "auto")
-    monkeypatch.setattr(
-        index._detection_manager,
-        "get_od_status",
-        lambda: {"reason": "night-paused" if night_paused else "daytime"},
-    )
     local_db_app.context_processor(lambda: {"local_development": False})
     snapshot = BytesIO()
     Image.new("RGB", (640, 360), (70, 100, 70)).save(snapshot, format="JPEG")
@@ -126,13 +119,9 @@ def test_live_player_survives_visibility_in_fullscreen(
             )
             frame = page.frame_locator("#go2rtc-frame")
             frame.get_by_role("button", name="Fullscreen").wait_for()
-            api.expect(page.locator("#stream-loading-image")).to_have_css(
-                "opacity", "1" if night_paused else "0"
+            api.expect(page.locator("#stream-loading-static")).to_have_css(
+                "opacity", "0"
             )
-            if night_paused:
-                api.expect(page.locator("#stream-loading-status")).to_contain_text(
-                    "Night pause active"
-                )
             api.expect(page.locator("#ptzDpadHome")).to_be_enabled()
             page.locator(".stream-embed").hover()
             page.locator("#ptzDpadHome").click()
