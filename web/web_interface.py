@@ -164,9 +164,8 @@ def create_web_interface(detection_manager, system_monitor=None):
 
     @server.route("/favicon.ico")
     def favicon():
-        return send_from_directory(
-            project_root, "favicon.ico", mimetype="image/vnd.microsoft.icon"
-        )
+        return send_from_directory(os.path.join(server.root_path, 'assets/images'),
+                        'favicon.ico',mimetype='image/vnd.microsoft.icon')
 
     Compress(server)
     server.config["COMPRESS_MIMETYPES"] = ["text/html", "application/json"]
